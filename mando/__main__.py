@@ -1,0 +1,114 @@
+"""Command line: python -m mando PACKAGE.zip --zones FIELD.geojson ..."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+
+from mando.bot import run
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Bot acompañante para un servidor TAK: geocercas, "
+        "comandos de chat, avisos de luz y lluvia, y pérdida de contacto.",
+    )
+    parser.add_argument("package", help="paquete de conexión .zip del bot")
+    parser.add_argument("--zones", required=True,
+                        help="GeoJSON del terreno (polígonos y lugares)")
+    parser.add_argument("--host", default=None,
+                        help="servidor TAK (por defecto, el del paquete)")
+    parser.add_argument("--port", type=int, default=None,
+                        help="puerto TLS (por defecto, el del paquete)")
+    parser.add_argument("--callsign", default="Mando")
+    parser.add_argument("--uid", default="mando-bot")
+    parser.add_argument("--tz-offset", type=float, default=-5)
+    parser.add_argument("--lat", type=float, default=None,
+                        help="latitud del bot (por defecto, centro del GeoJSON)")
+    parser.add_argument("--lon", type=float, default=None,
+                        help="longitud del bot (por defecto, centro del GeoJSON)")
+    parser.add_argument("--lost-after", type=int, default=300,
+                        help="segundos sin reportar antes de avisar (0 desactiva)")
+    parser.add_argument("--geofence-cooldown", type=int, default=180,
+                        help="segundos entre avisos de la misma zona y jugador")
+    parser.add_argument("--rain-mm", type=float, default=2.0,
+                        help="mm/h que cuentan como lluvia fuerte")
+    parser.add_argument("--no-announce", action="store_true",
+                        help="no enviar avisos de luz ni lluvia")
+    parser.add_argument("--no-weather", action="store_true",
+                        help="no consultar el pronóstico (ni en segundo plano)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="conectar y escuchar, pero mostrar los chats "
+                        "salientes en vez de enviarlos")
+    parser.add_argument("--openssl", default="openssl",
+                        help="ejecutable openssl (con proveedor legacy)")
+    parser.add_argument("--ignore-prefix", action="append", default=None,
+                        help="prefijo de uid a ignorar (repetible, "
+                        "por defecto: overlay-)")
+    return parser
+
+
+def _iter_positions(node):
+    if isinstance(node, list) and node:
+        if isinstance(node[0], (int, float)):
+            if len(node) >= 2 and isinstance(node[1], (int, float)):
+                yield (node[0], node[1])
+        else:
+            for child in node:
+                yield from _iter_positions(child)
+
+
+def bbox_center(path):
+    """Centre (lat, lon) del bounding box de todas las coordenadas."""
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    lons: list[float] = []
+    lats: list[float] = []
+    stack = [data]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if "coordinates" in node:
+                for lon, lat in _iter_positions(node["coordinates"]):
+                    lons.append(float(lon))
+                    lats.append(float(lat))
+            else:
+                stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    if not lons:
+        return None
+    return ((min(lats) + max(lats)) / 2.0, (min(lons) + max(lons)) / 2.0)
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    if args.ignore_prefix is None:
+        args.ignore_prefix = ["overlay-"]
+    if args.lat is None or args.lon is None:
+        try:
+            center = bbox_center(args.zones)
+        except (OSError, ValueError) as exc:
+            print(f"mando: no se pudo leer {args.zones}: {exc}",
+                  file=sys.stderr)
+            return 1
+        if center is None:
+            print(f"mando: {args.zones} no contiene coordenadas; "
+                  "indica --lat/--lon", file=sys.stderr)
+            return 1
+        if args.lat is None:
+            args.lat = center[0]
+        if args.lon is None:
+            args.lon = center[1]
+    try:
+        return run(args)
+    except KeyboardInterrupt:
+        return 0
+    except (OSError, ValueError) as exc:
+        print(f"mando: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

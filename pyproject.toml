@@ -1,0 +1,14 @@
+[project]
+name = "tak-mando"
+version = "0.1.0"
+description = "Companion bot for a TAK server: geofence safety alerts, chat commands, light and weather announcements and lost-contact warnings for ATAK/iTAK teams."
+readme = "README.md"
+license = { text = "AGPL-3.0-or-later" }
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+tak-mando = "mando.__main__:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
