@@ -7,7 +7,7 @@ import math
 import os
 import tempfile
 import unicodedata
-from datetime import timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from mando.geo import centroid
@@ -91,6 +91,20 @@ def _name_of(feat, fallback):
     if isinstance(feat, dict):
         return feat.get("properties", {}).get("name", fallback)
     return fallback
+
+
+def parse_iso_z(text):
+    if not isinstance(text, str):
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        at = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if at.tzinfo is None:
+        return at.replace(tzinfo=timezone.utc)
+    return at
 
 
 class Layer:

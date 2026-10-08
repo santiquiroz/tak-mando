@@ -189,6 +189,23 @@ def test_enemy_point_gets_symbol(ctx):
     assert ctx.layer.get("j-1")["properties"]["cot_type"] == "a-h-G-U-C-I"
 
 
+def test_ally_and_unknown_points_store_symbol(ctx):
+    execute("marcar_punto", {"nombre": "Amigo", "lugar": "E5", "tipo": "aliado"}, ADMIN, ctx)
+    execute("marcar_punto", {"nombre": "Sombra", "lugar": "E6", "tipo": "desconocido"}, ADMIN, ctx)
+    assert ctx.layer.get("j-1")["properties"]["cot_type"] == "a-f-G-U-C-I"
+    assert ctx.layer.get("j-2")["properties"]["cot_type"] == "a-u-G"
+
+
+def test_contact_rate_limit_ignores_bad_and_future_created(ctx):
+    execute("reportar_contacto", {"tipo": "infanteria", "lugar": "E6"}, GUEST, ctx)
+    ctx.layer.update_feature("j-1", {"created": "basura"}, NOW, "u-guest")
+    out = execute("reportar_contacto", {"tipo": "dron", "lugar": "E6"}, GUEST, ctx)
+    assert out.startswith("Contacto publicado")
+    ctx.layer.update_feature("j-2", {"created": "2026-10-10T23:00:00Z"}, NOW, "u-guest")
+    out = execute("reportar_contacto", {"tipo": "dron", "lugar": "E5"}, GUEST, ctx)
+    assert out.startswith("Contacto publicado")
+
+
 def test_line_of_sight_without_dem(ctx):
     assert execute("linea_de_vista", {"desde": "12", "hasta": "E5"}, ADMIN, ctx) == "No tengo datos de elevación cargados."
 
@@ -250,3 +267,23 @@ def test_covered_route_creates_linestring(ctx, tmp_path):
     props = f["properties"]
     assert props["kind"] == "ruta" and props["stroke"] == "#34c759" and props["stroke-width"] == 4
     assert props["name"] == "Ruta cubierta E5→E7" and props["labels"] is True
+
+
+def test_guest_covered_route_proposal_replays(ctx, tmp_path):
+    doc = {"north": 5.1650, "west": -75.4960, "cell_m": 50, "rows": 18, "cols": 18,
+           "count": [[0] * 18 for _ in range(18)]}
+    p = tmp_path / "exp.json"
+    p.write_text(json.dumps(doc), encoding="utf-8")
+    ctx.exposure = load_exposure(p)
+    out = execute("ruta_cubierta", {"desde": "E5", "hasta": "E7"}, GUEST, ctx)
+    assert out.startswith("Propuesta #1")
+    assert ctx.layer.features("Juego") == []
+    out = execute("confirmar_propuesta", {"numero": 1, "aceptar": True}, ADMIN, ctx)
+    assert "aceptada" in out
+    game = ctx.layer.features("Juego")
+    assert len(game) == 1
+    assert game[0]["geometry"]["type"] == "LineString"
+    coords = game[0]["geometry"]["coordinates"]
+    a_lat, a_lon = cell_center(GRID, "E5")
+    b_lat, b_lon = cell_center(GRID, "E7")
+    assert coords[0] == [a_lon, a_lat] and coords[-1] == [b_lon, b_lat]

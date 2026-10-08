@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from mando import cot
+from mando import brainbot, cot
 from mando.bot import Bot
 from mando.brain import LlmError
 from mando.grid import Grid
@@ -243,6 +243,31 @@ def test_expired_contacts_are_removed_on_tick(tmp_path):
                       {"type": "Point", "coordinates": [-75.49, 5.16]}, NOW, "u")
     bot.tick(NOW)
     assert layer.features("Juego") == []
+
+
+def test_expire_features_keeps_fresh_missing_and_malformed(tmp_path, capsys):
+    brainbot._last_layer_error = None
+    bot, layer = _bot(tmp_path, FakeBrain())
+    geom = {"type": "Point", "coordinates": [-75.49, 5.16]}
+    layer.add_feature({"name": "fresco", "folder": "Juego", "kind": "contacto", "expires": "2026-10-10T22:05:00Z"},
+                      geom, NOW, "u")
+    layer.add_feature({"name": "sin-exp", "folder": "Juego", "kind": "contacto"}, geom, NOW, "u")
+    layer.add_feature({"name": "mala", "folder": "Juego", "kind": "contacto", "expires": "basura"},
+                      geom, NOW, "u")
+    layer.add_feature({"name": "viejo", "folder": "Juego", "kind": "contacto", "expires": "2026-10-10T21:55:00Z"},
+                      geom, NOW, "u")
+    path = tmp_path / "juego.geojson"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["features"].append({"type": "Feature",
+                             "properties": {"name": "sin-id", "folder": "Juego", "kind": "contacto",
+                                            "expires": "2026-10-10T21:55:00Z"},
+                             "geometry": geom})
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    removed = brainbot.expire_features(bot, NOW)
+    assert removed == ["viejo"]
+    names = {f["properties"].get("name") for f in layer.features("Juego")}
+    assert names == {"fresco", "sin-exp", "mala", "sin-id"}
+    assert "capa de juego dañada" not in capsys.readouterr().out
 
 
 def test_bare_mando_prefix_does_nothing(tmp_path):

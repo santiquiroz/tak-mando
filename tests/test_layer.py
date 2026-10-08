@@ -11,6 +11,7 @@ from mando.layer import (
     LayerError,
     circle,
     normalize,
+    parse_iso_z,
 )
 
 NOW = datetime(2026, 10, 10, 22, 0, tzinfo=timezone.utc)
@@ -210,3 +211,10 @@ def test_write_state_before_layer(tmp_path, monkeypatch):
     _add(_layer(tmp_path), "A")
     assert order[0].endswith("state.json")
     assert order[1].endswith("juego.geojson")
+
+
+def test_parse_iso_z():
+    assert parse_iso_z("2026-10-10T22:00:00Z") == datetime(2026, 10, 10, 22, 0, tzinfo=timezone.utc)
+    assert parse_iso_z("2026-10-10T22:00:00") == datetime(2026, 10, 10, 22, 0, tzinfo=timezone.utc)
+    assert parse_iso_z("basura") is None
+    assert parse_iso_z(None) is None

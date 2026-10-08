@@ -3,7 +3,7 @@
 import json
 import unicodedata
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 
 from mando.commands import Context, run_command
 from mando.elevation import line_of_sight
@@ -11,7 +11,7 @@ from mando.events import EventLog
 from mando.exposure import cell_of, covered_route, exposed_fraction
 from mando.geo import centroid, format_distance, haversine_m, point_in_ring
 from mando.grid import grid_ref
-from mando.layer import COLORS, FOLDER_GAME, FOLDER_PROPOSALS, Layer, LayerError, circle
+from mando.layer import COLORS, FOLDER_GAME, FOLDER_PROPOSALS, Layer, LayerError, circle, parse_iso_z
 from mando.places import resolve_place
 
 
@@ -285,19 +285,6 @@ def _desc(props):
 
 def _local_hhmm(at, offset_h):
     return (at + timedelta(hours=offset_h)).strftime("%H:%M")
-
-
-def _parse_iso(raw):
-    text = str(raw or "")
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
-    try:
-        at = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if at.tzinfo is None:
-        return at.replace(tzinfo=timezone.utc)
-    return at
 
 
 def _iso_z(at):
@@ -619,8 +606,11 @@ def _recent_contact(ctx, actor, now):
         props = feat.get("properties", {})
         if props.get("kind") != "contacto" or props.get("author_uid") != actor.uid:
             continue
-        created = _parse_iso(props.get("created"))
-        if created is not None and (now - created).total_seconds() < 20:
+        created = parse_iso_z(props.get("created"))
+        if created is None:
+            continue
+        age = (now - created).total_seconds()
+        if 0 <= age < 20:
             return True
     return False
 

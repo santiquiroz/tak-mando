@@ -13,7 +13,7 @@ from mando.elevation import load_dted
 from mando.events import EventLog
 from mando.exposure import load_exposure
 from mando.grid import parse_grid
-from mando.layer import Layer
+from mando.layer import Layer, parse_iso_z
 from mando.roster import Player
 from mando.sun import moon_illumination, sun_events
 from mando.tools import TOOLS, Actor, ToolContext, execute, load_heights
@@ -22,19 +22,6 @@ from mando.zones import load_places, load_zones
 _STALE_TOOLS = frozenset({"donde_esta", "estado_equipo", "sitrep"})
 _NO_STATUS = "(Sin datos de jugadores: el bot no está corriendo.) "
 _MCP_ACTOR = Actor("mcp", "PC", authorized=True, is_mcp=True)
-
-
-def _parse_iso(raw):
-    text = str(raw or "")
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
-    try:
-        at = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if at.tzinfo is None:
-        return at.replace(tzinfo=timezone.utc)
-    return at
 
 
 def _num(value):
@@ -50,7 +37,7 @@ def _status_players(items, now):
     for item in items:
         if not isinstance(item, dict):
             continue
-        seen = _parse_iso(item.get("last_seen")) or now
+        seen = parse_iso_z(item.get("last_seen")) or now
         players.append(Player(
             uid=str(item.get("uid", "")),
             callsign=str(item.get("callsign", "")),
@@ -73,7 +60,7 @@ def load_status(path, now):
         return ([], EventLog(), None)
     players = _status_players(data.get("players") or [], now)
     events = EventLog.from_list(data.get("events") or [])
-    updated = _parse_iso(data.get("updated"))
+    updated = parse_iso_z(data.get("updated"))
     if updated is None:
         return (players, events, None)
     return (players, events, max(0.0, (now - updated).total_seconds()))

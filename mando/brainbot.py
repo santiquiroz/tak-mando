@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from mando import tools
 from mando.cot import all_chat_event, dm_event
-from mando.layer import FOLDER_GAME, LayerError, _write_json_atomic
+from mando.layer import FOLDER_GAME, LayerError, _write_json_atomic, parse_iso_z
 from mando.zones import Zone
 
 BRAIN_GAP_S = 4.0
@@ -265,19 +265,6 @@ def notify_proposals(bot, now):
     return out
 
 
-def _parse_expires(raw):
-    text = str(raw or "")
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
-    try:
-        at = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if at.tzinfo is None:
-        return at.replace(tzinfo=timezone.utc)
-    return at
-
-
 def expire_features(bot, now):
     removed = []
     if bot.layer is None:
@@ -291,8 +278,10 @@ def expire_features(bot, now):
         return removed
     for feat in feats:
         props = feat.get("properties", {}) if isinstance(feat, dict) else {}
-        exp = _parse_expires(props.get("expires"))
+        exp = parse_iso_z(props.get("expires"))
         if exp is None or exp > now:
+            continue
+        if not props.get("id"):
             continue
         try:
             bot.layer.delete_feature(props.get("id"), "mando-bot")
