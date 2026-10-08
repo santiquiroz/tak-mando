@@ -22,12 +22,17 @@ _ALIASES = {
     "ubicar": "donde",
     "peligros": "peligros",
     "peligro": "peligros",
+    "mapas": "mapas",
+    "mapa": "mapas",
+    "paquete": "mapas",
 }
 
 _AYUDA = (
     "Comandos: !luz (sol y oscuridad) \u00b7 !clima (pr\u00f3ximas 3 h) \u00b7 "
-    "!equipo (d\u00f3nde est\u00e1 cada uno) \u00b7 !donde <callsign> \u00b7 !peligros (cerca de ti)"
+    "!equipo (d\u00f3nde est\u00e1 cada uno) \u00b7 !donde <callsign> \u00b7 !peligros (cerca de ti) "
+    "\u00b7 !mapas (paquete de mapas)"
 )
+_SIN_PAQUETE = "Este servidor no tiene paquete de mapas configurado."
 _DESCONOCIDO = "No conozco ese comando. Escribe !ayuda."
 _SIN_PRONOSTICO = "Sin pron\u00f3stico: el servidor no pudo consultarlo."
 _SIN_EQUIPO = "No hay nadie m\u00e1s reportando posici\u00f3n."
@@ -231,6 +236,8 @@ def run_command(name, args, ctx):
         reply = _donde(args, ctx)
     elif name == "peligros":
         reply = _peligros(ctx)
+    elif name == "mapas":
+        reply = _SIN_PAQUETE
     else:
         reply = _DESCONOCIDO
     if len(reply) > 700:

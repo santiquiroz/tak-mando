@@ -35,6 +35,9 @@ def test_parse_aliases():
     assert parse_command("!team")[0] == "equipo"
     assert parse_command("!ubicar x")[0] == "donde"
     assert parse_command("!peligro")[0] == "peligros"
+    assert parse_command("!mapas")[0] == "mapas"
+    assert parse_command("!mapa")[0] == "mapas"
+    assert parse_command("!paquete")[0] == "mapas"
 
 
 def test_parse_accents_unknown_and_none():
@@ -161,7 +164,8 @@ def test_peligros():
 def test_ayuda_and_desconocido():
     assert run_command("ayuda", "", _ctx()) == (
         "Comandos: !luz (sol y oscuridad) \u00b7 !clima (pr\u00f3ximas 3 h) \u00b7 "
-        "!equipo (d\u00f3nde est\u00e1 cada uno) \u00b7 !donde <callsign> \u00b7 !peligros (cerca de ti)"
+        "!equipo (d\u00f3nde est\u00e1 cada uno) \u00b7 !donde <callsign> \u00b7 !peligros (cerca de ti) "
+        "\u00b7 !mapas (paquete de mapas)"
     )
     assert run_command("desconocido", "", _ctx()) == "No conozco ese comando. Escribe !ayuda."
 

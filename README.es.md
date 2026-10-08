@@ -12,8 +12,8 @@ puede. Los mensajes del bot están en español. El diseño está en
   entra a un polígono de peligro (un tanque inundado, el borde de un
   barranco).
 - **Comandos de chat**: los jugadores escriben `!luz`, `!clima`, `!equipo`,
-  `!donde <callsign>`, `!peligros` en el chat de ATAK/iTAK y reciben
-  respuesta.
+  `!donde <callsign>`, `!peligros`, `!mapas` en el chat de ATAK/iTAK
+  y reciben respuesta.
 - **Avisos**: puesta del sol, última luz y oscuridad total, además de
   lluvia fuerte en las próximas horas, enviados a todo el equipo.
 - **Pérdida de contacto**: mensaje al equipo cuando un jugador que estaba
@@ -55,6 +55,33 @@ propiedades simplestyle y la propiedad `folder` para agrupar:
 
 La posición del bot es por defecto el centro del bounding box de todas
 las coordenadas de este archivo (`--lat`/`--lon` la reemplazan).
+
+## Entregar el paquete del campo
+
+El bot puede entregar el paquete de datos del campo (mapas sin conexión,
+capa táctica) a cada jugador, para que nadie pase archivos zip:
+
+1. Sube primero el zip a los **paquetes de datos del servidor**
+   (interfaz web de OpenTAKServer). El bot no sube el archivo: enlaza la
+   copia del servidor por su sha256, así que los mismos bytes ya deben
+   estar ahí.
+2. El puerto TCP **8443** (sincronización Marti) del servidor debe ser
+   alcanzable por los jugadores; ATAK/iTAK descarga el paquete por ese
+   puerto.
+3. Apunta el bot a una copia local del mismo zip:
+
+```sh
+python -m mando mando.zip --zones campo.geojson \
+  --share-package campo.zip --share-name "Paquete del campo" \
+  --share-state /var/lib/tak-mando/sent.json
+```
+
+La primera vez que un jugador reporta posición, el bot le envía el paquete
+una vez, con un mensaje directo que explica cómo aceptarlo. Quien no lo
+recibió puede escribir `!mapas` para recibirlo de nuevo. `--share-url-base`
+reemplaza el enlace de descarga (por defecto `https://<servidor>:8443` del
+paquete de conexión); `--share-state` recuerda a quién ya se envió entre
+reinicios.
 
 ## Ejecución
 
@@ -116,6 +143,7 @@ sudo systemctl enable --now tak-mando
 | `!equipo` | Dónde está cada jugador y hace cuánto reportó. |
 | `!donde <callsign>` | Distancia, dirección y lugar de un jugador. |
 | `!peligros` | Zonas de peligro a menos de 200 m de ti. |
+| `!mapas` | Envía el paquete de mapas del campo. |
 
 Los comandos funcionan en All Chat Rooms y por mensaje directo al bot; el
 bot responde en la misma sala. Máximo un comando por remitente cada

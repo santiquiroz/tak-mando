@@ -6,7 +6,9 @@ assembles XML itself.
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 import os
 import queue
 import re
@@ -27,6 +29,7 @@ from mando.commands import Context, parse_command, run_command
 from mando.cot import (
     all_chat_event,
     dm_event,
+    fileshare_event,
     identity_event,
     parse_event,
     split_stream,
@@ -60,6 +63,77 @@ class PackageInfo:
     password: str
     client_p12: bytes
     trust_p12: bytes
+
+
+@dataclass
+class SharedPackage:
+    path: Path
+    filename: str
+    name: str
+    sha256: str
+    size_bytes: int
+    url: str
+
+
+def shared_package(path, name, url_base) -> SharedPackage:
+    """Describe a field data package file for sharing by sha256 link."""
+    where = Path(path)
+    try:
+        data = where.read_bytes()
+    except OSError as exc:
+        raise ValueError(
+            f"no se encontró el paquete para compartir: {path}"
+        ) from exc
+    digest = hashlib.sha256(data).hexdigest()
+    return SharedPackage(
+        path=where,
+        filename=where.name,
+        name=name,
+        sha256=digest,
+        size_bytes=len(data),
+        url=f"{url_base.rstrip('/')}/Marti/sync/content?hash={digest}",
+    )
+
+
+def _load_sent_state(path) -> dict:
+    """Load {sha256: set(uids)}; a missing or invalid file means empty."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out = {}
+    for key, value in data.items():
+        if isinstance(key, str) and isinstance(value, list):
+            out[key] = {u for u in value if isinstance(u, str)}
+    return out
+
+
+def _save_sent_state(path, state: dict) -> None:
+    """Persist {sha256: set(uids)} atomically (temp file + os.replace)."""
+    target = Path(path)
+    payload = {key: sorted(uids) for key, uids in state.items()}
+    try:
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(target.parent), prefix=target.name + ".", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            os.replace(tmp_name, target)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
+    except OSError:
+        pass
 
 
 def _collect_package_files(zf: zipfile.ZipFile, depth: int, files: list) -> None:
@@ -227,6 +301,8 @@ class Bot:
         announce=True,
         ignore_prefixes=("overlay-",),
         version=None,
+        package=None,
+        sent_state=None,
     ):
         self.uid = uid
         self.callsign = callsign
@@ -254,6 +330,11 @@ class Bot:
         )
         self.announce = announce
         self.version = version if version is not None else __version__
+        self.package = package
+        self.sent_state = sent_state
+        self._sent: dict = (
+            _load_sent_state(sent_state) if sent_state is not None else {}
+        )
         self.last_cmd: dict = {}
         self._sun_day = None
         self._sun: dict = {}
@@ -303,6 +384,30 @@ class Bot:
             except Exception:
                 player = None
             if player is not None:
+                if self.package is not None:
+                    sent = self._sent.setdefault(
+                        self.package.sha256, set()
+                    )
+                    if player.uid not in sent:
+                        out.append(fileshare_event(
+                            self.uid, self.callsign, player.uid,
+                            self.package.filename, self.package.name,
+                            self.package.url, self.package.size_bytes,
+                            self.package.sha256, now,
+                        ))
+                        out.append(dm_event(
+                            self.uid, self.callsign, player.uid,
+                            player.callsign,
+                            f'Te envié el paquete del campo '
+                            f'"{self.package.name}" (mapas satelitales '
+                            "y capa táctica). Acéptalo en la "
+                            "notificación de ATAK/iTAK. Si no te "
+                            "llegó, escribe !mapas.",
+                            now,
+                        ))
+                        sent.add(player.uid)
+                        if self.sent_state is not None:
+                            _save_sent_state(self.sent_state, self._sent)
                 for msg in self.geofence.check(player, now):
                     out.append(dm_event(
                         self.uid, self.callsign, player.uid,
@@ -311,13 +416,15 @@ class Bot:
             chat = event.get("chat")
             if chat:
                 reply = self._command_reply(chat, event, now, sun)
-                if reply is not None:
+                if isinstance(reply, list):
+                    out.extend(reply)
+                elif reply is not None:
                     out.append(reply)
         return out
 
     def _command_reply(
         self, chat: dict, event: dict, now: datetime, sun: dict
-    ) -> str | None:
+    ) -> str | list[str] | None:
         sender = chat.get("sender_uid") or ""
         if sender == "" or sender == self.uid:
             return None
@@ -336,6 +443,8 @@ class Bot:
             return None
         self.last_cmd[sender] = now
         requester = self.roster.get(sender)
+        if name == "mapas" and self.package is not None:
+            return self._mapas_reply(sender, requester, chat, now)
         hours, forecast_age = self._forecast(now)
         ctx = Context(
             now_utc=now,
@@ -359,6 +468,31 @@ class Bot:
                 self.uid, self.callsign, sender, to_callsign, text, now
             )
         return all_chat_event(self.uid, self.callsign, text, now)
+
+    def _mapas_reply(
+        self, sender: str, requester, chat: dict, now: datetime
+    ) -> list[str]:
+        share = fileshare_event(
+            self.uid, self.callsign, sender,
+            self.package.filename, self.package.name,
+            self.package.url, self.package.size_bytes,
+            self.package.sha256, now,
+        )
+        text = (
+            f"Paquete enviado: {self.package.name}. "
+            "Acéptalo en la notificación."
+        )
+        if (chat.get("room_id") or "") == self.uid:
+            to_callsign = (
+                requester.callsign if requester is not None
+                else (chat.get("sender_callsign") or sender)
+            )
+            reply = dm_event(
+                self.uid, self.callsign, sender, to_callsign, text, now
+            )
+        else:
+            reply = all_chat_event(self.uid, self.callsign, text, now)
+        return [share, reply]
 
     def tick(self, now: datetime) -> list[str]:
         """Periodic work: identity, lost contact, announcements."""
@@ -419,7 +553,10 @@ def _log_outgoing(out: str) -> None:
     if parsed is None:
         _log("envío sin parsear")
         return
-    if parsed.get("type") == "b-t-f":
+    if parsed.get("type") == "b-f-t-r":
+        dests = ", ".join(parsed.get("dest_uids") or []) or "?"
+        _log(f"paquete {dests}")
+    elif parsed.get("type") == "b-t-f":
         chat = parsed.get("chat") or {}
         text = _short(chat.get("text") or "")
         if parsed.get("dest_uids"):
@@ -521,6 +658,19 @@ def run(args) -> int:
         port = getattr(args, "port", None) or info.port
         zones = load_zones(args.zones)
         places = load_places(args.zones)
+        share_path = getattr(args, "share_package", None)
+        package = None
+        if share_path:
+            url_base = (
+                getattr(args, "share_url_base", None)
+                or f"https://{info.host}:8443"
+            )
+            share_name = (
+                getattr(args, "share_name", None) or "Paquete del campo"
+            )
+            package = shared_package(share_path, share_name, url_base)
+        share_state = getattr(args, "share_state", None)
+        sent_state = Path(share_state) if share_state else None
         lat = args.lat
         lon = args.lon
         if args.no_weather:
@@ -556,11 +706,16 @@ def run(args) -> int:
             announce=not args.no_announce,
             ignore_prefixes=tuple(args.ignore_prefix),
             forecast_cache=cache,
+            package=package,
+            sent_state=sent_state,
         )
         _log(
             f"zonas: {len(zones)} peligros, {len(places)} lugares "
             f"({lat:.5f},{lon:.5f})"
         )
+        if package is not None:
+            _log(f"paquete: {package.name} ({package.filename}, "
+                 f"{package.size_bytes} bytes)")
         failures = 0
         while True:
             try:

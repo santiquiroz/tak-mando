@@ -10,7 +10,8 @@ Spanish. Design details live in [docs/DESIGN.md](docs/DESIGN.md).
 - **Geofence safety alerts**: a direct chat message to a player the moment
   they enter a hazard polygon (a flooded tank, a cliff edge).
 - **Chat commands**: players type `!luz`, `!clima`, `!equipo`,
-  `!donde <callsign>`, `!peligros` in ATAK/iTAK chat and get an answer.
+  `!donde <callsign>`, `!peligros`, `!mapas` in ATAK/iTAK chat and get
+  an answer.
 - **Announcements**: sunset, last light and darkness, plus heavy rain in
   the next hours, sent to the whole team.
 - **Lost contact**: a team message when a player who was active stops
@@ -50,6 +51,30 @@ simplestyle properties and a `folder` property for grouping:
 
 The bot's own position defaults to the centre of the bounding box of all
 coordinates in this file (`--lat`/`--lon` override it).
+
+## Sharing the field package
+
+The bot can hand the field data package (offline maps, tactical overlay)
+to every player, so nobody has to pass zip files around:
+
+1. Upload the zip to the **server's data packages** first (OpenTAKServer
+   web interface). The bot does not upload the file: it links to the
+   server copy by its sha256, so the same bytes must already be there.
+2. TCP port **8443** (Marti sync) on the server must be reachable by the
+   players; ATAK/iTAK downloads the package from that port.
+3. Point the bot at a local copy of the same zip:
+
+```sh
+python -m mando mando.zip --zones campo.geojson \
+  --share-package campo.zip --share-name "Paquete del campo" \
+  --share-state /var/lib/tak-mando/sent.json
+```
+
+The first time a player reports position, the bot sends them the package
+once, with a direct message explaining how to accept it. Players who
+missed it can type `!mapas` to get it again. `--share-url-base` overrides
+the download link (default `https://<server>:8443` from the connection
+package); `--share-state` remembers who already got it across restarts.
 
 ## Running
 
@@ -111,6 +136,7 @@ sudo systemctl enable --now tak-mando
 | `!equipo` | Dónde está cada jugador y hace cuánto reportó. |
 | `!donde <callsign>` | Distancia, dirección y lugar de un jugador. |
 | `!peligros` | Zonas de peligro a menos de 200 m de ti. |
+| `!mapas` | Envía el paquete de mapas del campo. |
 
 Commands work in All Chat Rooms and by direct message to the bot; the bot
 answers in the same room. At most one command per sender every 3 seconds.

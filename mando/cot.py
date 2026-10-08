@@ -82,6 +82,25 @@ def all_chat_event(sender_uid, sender_callsign, text, now, message_id=None):
     )
 
 
+def fileshare_event(sender_uid, sender_callsign, to_uid, filename, name, url, size_bytes, sha256, now, transfer_uid=None):
+    tid = transfer_uid if transfer_uid is not None else str(uuid.uuid4())
+    t = cot_time(now)
+    stale = cot_time(now + timedelta(seconds=600))
+    return (
+        f'<event version="2.0" uid="{xml_escape(tid)}" type="b-f-t-r"'
+        f' how="h-e" time="{t}" start="{t}" stale="{stale}">'
+        '<point lat="0.0" lon="0.0" hae="9999999.0" ce="9999999.0" le="9999999.0"/>'
+        "<detail>"
+        f'<fileshare filename="{xml_escape(filename)}" senderUrl="{xml_escape(url)}"'
+        f' sizeInBytes="{xml_escape(str(size_bytes))}" sha256="{xml_escape(sha256)}"'
+        f' senderUid="{xml_escape(sender_uid)}" senderCallsign="{xml_escape(sender_callsign)}"'
+        f' name="{xml_escape(name)}"/>'
+        f'<ackrequest uid="{xml_escape(tid)}" ackrequested="true" tag="{xml_escape(name)}"/>'
+        f'<marti><dest uid="{xml_escape(to_uid)}"/></marti></detail>'
+        "</event>"
+    )
+
+
 def _parse_cot_time(value):
     if not value:
         return None

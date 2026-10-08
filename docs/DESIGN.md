@@ -3,7 +3,8 @@
 tak-mando is a companion bot for a TAK server (OpenTAKServer, FreeTAKServer, TAK Server). It connects as one more client with its own certificate, listens to everything the team shares and adds what a server alone cannot:
 
 - **Geofence safety alerts**: a direct chat message to a player the moment they enter a hazard polygon (a flooded tank, a cliff edge).
-- **Chat commands**: players type `!luz`, `!clima`, `!equipo`, `!donde <callsign>`, `!peligros` in ATAK/iTAK chat and get an answer.
+- **Chat commands**: players type `!luz`, `!clima`, `!equipo`, `!donde <callsign>`, `!peligros`, `!mapas` in ATAK/iTAK chat and get an answer.
+- **Field package**: the bot hands the field data package to every player (once each, plus `!mapas` on demand), so nobody passes zip files around.
 - **Announcements**: sunset, last light and darkness, and heavy rain in the next hours, sent to the whole team.
 - **Lost contact**: a team message when a player who was active stops reporting.
 
@@ -47,6 +48,7 @@ All coordinates in GeoJSON are `[lon, lat]`. All other function arguments are `l
   OpenTAKServer routes `<marti><dest uid=…/>` to exactly one device (each client is bound by its uid), for ATAK and iTAK alike.
 - `dm_event(sender_uid, sender_callsign, to_uid, to_callsign, text, now, message_id=None) -> str`: `chat_event(..., room_name=to_callsign, room_id=to_uid, dest_uid=to_uid)`.
 - `all_chat_event(sender_uid, sender_callsign, text, now, message_id=None) -> str`: room name and id both `All Chat Rooms`, no dest.
+- `fileshare_event(sender_uid, sender_callsign, to_uid, filename, name, url, size_bytes, sha256, now, transfer_uid=None) -> str`: offers a server data package to one player. `transfer_uid` defaults to `str(uuid.uuid4())`. Emits `type="b-f-t-r"`, `how="h-e"`, stale `T+600s`, with a `fileshare` element (`filename`, `senderUrl`, `sizeInBytes`, `sha256`, `senderUid`, `senderCallsign`, `name`), an `ackrequest` (uid = transfer uid, `ackrequested="true"`, `tag` = name) and `marti/dest` for the player. Every attribute escaped.
 - `parse_event(xml: str) -> dict | None`: returns `None` for malformed XML and for any text containing `<!DOCTYPE` or `<!ENTITY` (entity-expansion attacks; check before parsing). Result keys:
   - `uid`, `type`, `how` (str, may be empty)
   - `time`, `stale` (aware datetime or None; accept `Z` with or without fractional seconds)
@@ -116,10 +118,11 @@ The same GeoJSON used for the map overlay (simplestyle properties, `folder` prop
 
 ## mando/commands.py - chat commands
 
-- `parse_command(text) -> tuple[str, str] | None`: None unless the stripped text starts with `!`. Returns `(name, args)` with the name lower-cased and accents removed, mapped through aliases: `ayuda|help|h → ayuda`, `luz|sol → luz`, `clima|tiempo → clima`, `equipo|team → equipo`, `donde|ubicar → donde`, `peligros|peligro → peligros`; anything else → `desconocido`. `args` is the rest, stripped, max 40 characters.
+- `parse_command(text) -> tuple[str, str] | None`: None unless the stripped text starts with `!`. Returns `(name, args)` with the name lower-cased and accents removed, mapped through aliases: `ayuda|help|h → ayuda`, `luz|sol → luz`, `clima|tiempo → clima`, `equipo|team → equipo`, `donde|ubicar → donde`, `peligros|peligro → peligros`, `mapas|mapa|paquete → mapas`; anything else → `desconocido`. `args` is the rest, stripped, max 40 characters.
 - `Context` dataclass: `now_utc, utc_offset_h, requester` (Player or None), `players` (list), `places`, `zones`, `sun` (sun_events dict for today), `moon` (float), `hours` (forecast list), `forecast_age_s` (float or None).
 - `run_command(name, args, ctx) -> str` (reply at most 700 characters; cut with `…`):
-  - `ayuda`: `"Comandos: !luz (sol y oscuridad) · !clima (próximas 3 h) · !equipo (dónde está cada uno) · !donde <callsign> · !peligros (cerca de ti)"`.
+  - `ayuda`: `"Comandos: !luz (sol y oscuridad) · !clima (próximas 3 h) · !equipo (dónde está cada uno) · !donde <callsign> · !peligros (cerca de ti) · !mapas (paquete de mapas)"`.
+  - `mapas`: `"Este servidor no tiene paquete de mapas configurado."` (this is what `run_command` returns; when `--share-package` is set the bot instead sends the fileshare to the requester plus `"Paquete enviado: {name}. Acéptalo en la notificación."`).
   - `luz`: before sunset `"Sol se pone {HH:MM} (en {Xh Ym}). Oscuridad total {HH:MM}. Luna {N} %."`; after nautical dusk and before sunrise `"Es de noche. Amanece {HH:MM} (en {…}). Luna {N} %."`; between sunset and nautical dusk `"Crepúsculo. Oscuridad total {HH:MM} (en {…})."`. Durations like `"1 h 12 min"` or `"8 min"`.
   - `clima`: next 3 hours as `"{HH:MM} {t:.0f}°C lluvia {p}% {mm:.1f} mm"` joined by `" · "`; append ` (pronóstico de hace {N} min)` when `forecast_age_s` is known; `"Sin pronóstico: el servidor no pudo consultarlo."` when empty.
   - `equipo`: other players (not the requester), at most 10, each `"{callsign} {describe_offset from requester} (hace {age})"`; without a requester position just `"{callsign} (hace {age})"`. Age: `"12 s"`, `"3 min"`, `"1 h"`. Empty: `"No hay nadie más reportando posición."`.
@@ -129,13 +132,13 @@ The same GeoJSON used for the map overlay (simplestyle properties, `folder` prop
 
 ## mando/bot.py and mando/__main__.py - runtime
 
-CLI: `python -m mando PACKAGE.zip --zones FIELD.geojson [--host H] [--port P] [--callsign Mando] [--uid mando-bot] [--tz-offset -5] [--lat LAT --lon LON] [--lost-after 300] [--geofence-cooldown 180] [--rain-mm 2.0] [--no-announce] [--no-weather] [--dry-run] [--openssl openssl]`.
+CLI: `python -m mando PACKAGE.zip --zones FIELD.geojson [--host H] [--port P] [--callsign Mando] [--uid mando-bot] [--tz-offset -5] [--lat LAT --lon LON] [--lost-after 300] [--geofence-cooldown 180] [--rain-mm 2.0] [--no-announce] [--no-weather] [--dry-run] [--openssl openssl] [--share-package ZIP] [--share-name NAME] [--share-url-base URL] [--share-state PATH]`.
 
 - **Connection**: read the OpenTAKServer/ATAK connection package (zip, possibly nested): the `.pref` gives `connectString0` (`host:port:ssl`) and `clientPassword` (default `atakatak`); two `.p12` files, the one with `truststore` in its name is the CA. Convert both with `openssl pkcs12 -legacy -in … -passin env:MANDO_P12_PASSWORD` (the password goes through the environment, never the command line) (`-nodes` for the client, `-nokeys` for the truststore) into a private temporary directory (mode 0700) that is deleted on exit. `ssl.SSLContext(PROTOCOL_TLS_CLIENT)`, `check_hostname = False` (TAK server certificates do not carry the connect address), verify against the truststore, load the client chain.
 - **Position of the bot**: `--lat/--lon`, defaulting to the centre of the zones file bounding box.
 - **Reader thread**: receive, decode UTF-8 with `errors="replace"`, `split_stream`, `parse_event`, put dicts on a `queue.Queue`.
 - **Main loop (1 s tick)**:
-  - drain the queue: `Roster.update`; for each updated player run `GeofenceTracker.check` and send each message as a DM.
+  - drain the queue: `Roster.update`; for each updated player run `GeofenceTracker.check` and send each message as a DM. When `--share-package` is set, the first accepted position from a player uid also triggers one `fileshare_event` to that player plus an explanatory DM; sent uids are remembered per package sha256, optionally persisted with `--share-state` (JSON `{sha256: [uids]}`, written via temp file + `os.replace`).
   - chat events whose text parses as a command, not sent by the bot itself, at most one command per sender every 3 s: build the `Context`, run the command, reply by DM when the command came by DM (`room_id` equals the bot uid), otherwise to `All Chat Rooms`.
   - every 60 s: re-send the identity event.
   - every 30 s: `LostContactTracker.check` → one All Chat Rooms message per player: `"⚠ {callsign} lleva {N} min sin reportar. Última posición: {describe_location or lat,lon with 5 decimals}."`

@@ -46,6 +46,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ignore-prefix", action="append", default=None,
                         help="prefijo de uid a ignorar (repetible, "
                         "por defecto: overlay-)")
+    parser.add_argument("--share-package", default=None,
+                        help="zip del campo a entregar a los jugadores")
+    parser.add_argument("--share-name", default="Paquete del campo",
+                        help="nombre del paquete para los jugadores")
+    parser.add_argument("--share-url-base", default=None,
+                        help="base del enlace Marti (por defecto, "
+                        "https://<servidor>:8443)")
+    parser.add_argument("--share-state", default=None,
+                        help="JSON donde recordar a quién se envió "
+                        "el paquete")
     return parser
 
 
