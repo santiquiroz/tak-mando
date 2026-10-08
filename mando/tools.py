@@ -594,12 +594,14 @@ def _mover(args, actor, ctx):
     if err is not None:
         return err
     name = feat["properties"].get("name", ref)
-    summary = f"mover {name} a {found.label}"
+    label = _label(args, "lugar_etiqueta", found.label)
+    summary = f"mover {name} a {label}"
     if not _can(actor):
-        return _propose(ctx, actor, "mover", {"objeto": ref, "lugar": lugar}, summary)
+        replay = {"objeto": ref, "lugar": _pinned(found.lat, found.lon), "lugar_etiqueta": label}
+        return _propose(ctx, actor, "mover", replay, summary)
     ctx.layer.move_feature(feat["properties"]["id"], found.lat, found.lon, _now(ctx), actor.uid)
     ctx.events.add("mapa", f"{actor.callsign}: {summary}", _now(ctx))
-    return f"Movido {name} a {found.label}."
+    return f"Movido {name} a {label}."
 
 
 def _borrar(args, actor, ctx):

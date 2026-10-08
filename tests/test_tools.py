@@ -368,5 +368,19 @@ def test_zona_proposal_pins_aqui(ctx):
     assert lon == pytest.approx(p1_lon, abs=1e-5)
 
 
+def test_mover_proposal_pins_aqui(ctx):
+    execute("marcar_punto", {"nombre": "CAJA", "lugar": "E5", "tipo": "info"}, ADMIN, ctx)
+    p1_lat, p1_lon = cell_center(GRID, "C3")
+    guest = _guest_at(ctx, "C3")
+    out = execute("mover", {"objeto": "CAJA", "lugar": "aquí"}, GUEST, ctx)
+    assert out.startswith("Propuesta #1")
+    label = out.split(" a ", 1)[1].split(".")[0]
+    _confirmer_at(ctx, guest, "A1", "H8")
+    confirm = execute("confirmar_propuesta", {"numero": 1, "aceptar": True}, ADMIN, ctx)
+    assert confirm == f"Propuesta #1 aceptada: Movido CAJA a {label}."
+    lon, lat = ctx.layer.get("j-1")["geometry"]["coordinates"]
+    assert haversine_m(lat, lon, p1_lat, p1_lon) < 1.0
+
+
 def test_tool_schemas_hide_etiqueta_keys():
     assert "_etiqueta" not in json.dumps(TOOLS, ensure_ascii=False)
