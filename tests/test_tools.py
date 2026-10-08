@@ -3,9 +3,15 @@ from datetime import datetime, timezone
 
 import pytest
 
+from test_elevation import _write_dted
+
 from mando.commands import Context
+from mando.elevation import line_of_sight, load_dted
 from mando.events import EventLog
+from mando.exposure import load_exposure
+from mando.geo import format_distance, haversine_m
 from mando.grid import Grid
+from mando.places import cell_center
 from mando.layer import Layer
 from mando.roster import Player
 from mando.tools import TOOLS, Actor, ToolContext, clean, execute, proposal_notice
@@ -34,7 +40,7 @@ def ctx(tmp_path):
 
 def test_tools_schema_names_unique_and_valid():
     names = [t["function"]["name"] for t in TOOLS]
-    assert len(names) == len(set(names)) == 16
+    assert len(names) == len(set(names)) == 19
     for t in TOOLS:
         params = t["function"]["parameters"]
         assert params["type"] == "object"
@@ -167,3 +173,80 @@ def test_sitrep_and_layer_listing(ctx):
 def test_hazards_include_layer_points(ctx):
     execute("marcar_punto", {"nombre": "Pozo", "lugar": "E5", "tipo": "peligro"}, ADMIN, ctx)
     assert "Pozo" in execute("peligros", {}, ADMIN, ctx)
+
+
+def test_contact_report_any_player_expires_and_announces(ctx):
+    out = execute("reportar_contacto", {"tipo": "infanteria", "cantidad": 3, "lugar": "E6"}, GUEST, ctx)
+    assert out.startswith("Contacto publicado: 3 infantería en E6. Se borra a las 17:10")
+    f = ctx.layer.features("Juego")[0]["properties"]
+    assert f["cot_type"] == "a-h-G-U-C-I" and f["stale_minutes"] == 10 and f["kind"] == "contacto"
+    assert [a["text"] for a in ctx.layer.due_announcements(NOW)] == ["CONTACTO: 3 infantería en E6 (Recon, 17:00)."]
+    assert execute("reportar_contacto", {"tipo": "dron", "lugar": "E6"}, GUEST, ctx) == "Espera unos segundos antes de otro reporte."
+
+
+def test_enemy_point_gets_symbol(ctx):
+    execute("marcar_punto", {"nombre": "Tirador", "lugar": "E6", "tipo": "enemigo"}, ADMIN, ctx)
+    assert ctx.layer.get("j-1")["properties"]["cot_type"] == "a-h-G-U-C-I"
+
+
+def test_line_of_sight_without_dem(ctx):
+    assert execute("linea_de_vista", {"desde": "12", "hasta": "E5"}, ADMIN, ctx) == "No tengo datos de elevación cargados."
+
+
+def test_covered_route_without_exposure(ctx):
+    assert execute("ruta_cubierta", {"desde": "E5", "hasta": "12"}, ADMIN, ctx) == "No tengo el mapa de visibilidad cargado."
+
+
+def test_line_of_sight_visible_with_synthetic_dted(ctx, tmp_path):
+    p = tmp_path / "flat.dt2"
+    _write_dted(p, lambda c, r: 2000)
+    ctx.dem = load_dted(p)
+    vis, blocked, dist = line_of_sight(ctx.dem, 5.155, -75.4940, 1.7, 5.155, -75.4920, 1.7)
+    assert vis is True and blocked is None
+    expected = f"Desde 5.15500,-75.49400 a 5.15500,-75.49200 ({format_distance(dist)}): visible."
+    out = execute("linea_de_vista", {"desde": "5.155,-75.4940", "hasta": "5.155,-75.4920"}, ADMIN, ctx)
+    assert out == expected
+
+
+def test_line_of_sight_blocked_by_ridge(ctx, tmp_path):
+    p = tmp_path / "ridge.dt2"
+    _write_dted(p, lambda c, r: 2100 if c == 25 else 2000)
+    ctx.dem = load_dted(p)
+    vis, blocked, dist = line_of_sight(ctx.dem, 5.155, -75.4940, 1.7, 5.155, -75.4920, 1.7)
+    assert vis is False and 50 < blocked < 150
+    expected = (f"Desde 5.15500,-75.49400 a 5.15500,-75.49200 ({format_distance(dist)}): "
+                f"no visible, lo tapa el terreno a {format_distance(blocked)} de 5.15500,-75.49400.")
+    out = execute("linea_de_vista", {"desde": "5.155,-75.4940", "hasta": "5.155,-75.4920"}, ADMIN, ctx)
+    assert out == expected
+
+
+def test_line_of_sight_uses_building_height(ctx, tmp_path):
+    p = tmp_path / "ridge.dt2"
+    _write_dted(p, lambda c, r: 2100 if c == 25 else 2000)
+    ctx.dem = load_dted(p)
+    args = {"desde": "5.155,-75.4940", "hasta": "5.155,-75.4920"}
+    assert "no visible" in execute("linea_de_vista", args, ADMIN, ctx)
+    ctx.heights = {"5.15500,-75.49400": 300.0}
+    assert execute("linea_de_vista", args, ADMIN, ctx).endswith(": visible.")
+
+
+def test_covered_route_creates_linestring(ctx, tmp_path):
+    doc = {"north": 5.1650, "west": -75.4960, "cell_m": 50, "rows": 18, "cols": 18,
+           "count": [[0] * 18 for _ in range(18)]}
+    p = tmp_path / "exp.json"
+    p.write_text(json.dumps(doc), encoding="utf-8")
+    ctx.exposure = load_exposure(p)
+    out = execute("ruta_cubierta", {"desde": "E5", "hasta": "E7"}, ADMIN, ctx)
+    f = ctx.layer.get("j-1")
+    assert f["geometry"]["type"] == "LineString"
+    coords = f["geometry"]["coordinates"]
+    assert len(coords) >= 2
+    a_lat, a_lon = cell_center(GRID, "E5")
+    b_lat, b_lon = cell_center(GRID, "E7")
+    assert coords[0] == [a_lon, a_lat] and coords[-1] == [b_lon, b_lat]
+    total = sum(haversine_m(coords[i - 1][1], coords[i - 1][0], coords[i][1], coords[i][0])
+                for i in range(1, len(coords)))
+    assert out == f"Ruta cubierta E5 → E7 dibujada ({format_distance(total)}, 0 % expuesta). id j-1."
+    props = f["properties"]
+    assert props["kind"] == "ruta" and props["stroke"] == "#34c759" and props["stroke-width"] == 4
+    assert props["name"] == "Ruta cubierta E5→E7" and props["labels"] is True

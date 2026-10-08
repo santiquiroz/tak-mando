@@ -9,12 +9,14 @@ from pathlib import Path
 from mando import __version__
 from mando.__main__ import bbox_center
 from mando.commands import Context
+from mando.elevation import load_dted
 from mando.events import EventLog
+from mando.exposure import load_exposure
 from mando.grid import parse_grid
 from mando.layer import Layer
 from mando.roster import Player
 from mando.sun import moon_illumination, sun_events
-from mando.tools import TOOLS, Actor, ToolContext, execute
+from mando.tools import TOOLS, Actor, ToolContext, execute, load_heights
 from mando.zones import load_places, load_zones
 
 _STALE_TOOLS = frozenset({"donde_esta", "estado_equipo", "sitrep"})
@@ -104,7 +106,8 @@ def _tool_list():
 
 class McpServer:
     def __init__(self, layer, zones, places, grid, status_path, lat, lon,
-                 utc_offset_h=-5.0, clock=lambda: datetime.now(timezone.utc)):
+                 utc_offset_h=-5.0, clock=lambda: datetime.now(timezone.utc),
+                 dem=None, exposure=None, heights=None):
         self._layer = layer
         self._zones = zones
         self._places = places
@@ -114,6 +117,9 @@ class McpServer:
         self._lon = lon
         self._utc_offset_h = utc_offset_h
         self._clock = clock
+        self._dem = dem
+        self._exposure = exposure
+        self._heights = heights
 
     def handle(self, message):
         if not isinstance(message, dict):
@@ -160,7 +166,8 @@ class McpServer:
             args = {}
         now = self._clock()
         players, events, age = load_status(self._status_path, now)
-        ctx = ToolContext(self._layer, events, self._context(now, players), writes_left=20)
+        ctx = ToolContext(self._layer, events, self._context(now, players), writes_left=20,
+                          dem=self._dem, exposure=self._exposure, heights=self._heights)
         out = execute(name, args, _MCP_ACTOR, ctx)
         if name in _STALE_TOOLS:
             out = (_stale_prefix(age) + out)[:600]
@@ -173,6 +180,9 @@ def _build_parser():
     parser.add_argument("--state", default="mando-state.json")
     parser.add_argument("--status", default="mando-status.json")
     parser.add_argument("--zones", required=True, help="GeoJSON del terreno")
+    parser.add_argument("--dted", default=None, help="DTED de elevación para línea de vista")
+    parser.add_argument("--exposure", default=None, help="JSON de visibilidad para rutas cubiertas")
+    parser.add_argument("--buildings", default=None, help="GeoJSON de edificios (lugares y alturas)")
     parser.add_argument("--grid", default=None,
                         help="cuadrícula GRG NORTH,WEST,CELL_M,COLS,ROWS")
     parser.add_argument("--tz-offset", type=float, default=-5.0)
@@ -186,6 +196,16 @@ def _load_field(path):
     if center is None:
         raise ValueError(f"{path} no contiene coordenadas")
     return (zones, places, center)
+
+
+def _load_optional(path, loader, label):
+    if not path:
+        return None
+    try:
+        return loader(path)
+    except (OSError, ValueError) as exc:
+        print(f"mando-mcp: {label} ({exc})", file=sys.stderr)
+        return None
 
 
 def _serve(server):
@@ -225,9 +245,20 @@ def main(argv=None):
     except (OSError, ValueError) as exc:
         print(f"mando-mcp: no se pudo leer {args.zones}: {exc}", file=sys.stderr)
         return 1
+    dem = _load_optional(args.dted, load_dted, "sin DTED")
+    exposure = _load_optional(args.exposure, load_exposure, "sin mapa de visibilidad")
+    heights = None
+    if args.buildings:
+        try:
+            extra = load_places(args.buildings)
+            heights = load_heights(args.buildings)
+        except (OSError, ValueError) as exc:
+            print(f"mando-mcp: sin edificios ({exc})", file=sys.stderr)
+        else:
+            places = places + extra
     layer = Layer(args.layer, args.state)
     server = McpServer(layer, zones, places, grid, args.status, center[0], center[1],
-                       utc_offset_h=args.tz_offset)
+                       utc_offset_h=args.tz_offset, dem=dem, exposure=exposure, heights=heights)
     _serve(server)
     return 0
 

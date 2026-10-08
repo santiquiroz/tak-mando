@@ -1,12 +1,15 @@
 """Map tools with permissions and proposals for the LLM brain."""
 
+import json
 import unicodedata
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from mando.commands import Context, run_command
+from mando.elevation import line_of_sight
 from mando.events import EventLog
-from mando.geo import centroid, haversine_m, point_in_ring
+from mando.exposure import cell_of, covered_route, exposed_fraction
+from mando.geo import centroid, format_distance, haversine_m, point_in_ring
 from mando.grid import grid_ref
 from mando.layer import COLORS, FOLDER_GAME, FOLDER_PROPOSALS, Layer, LayerError, circle
 from mando.places import resolve_place
@@ -34,9 +37,12 @@ TOOLS = [
     _fn("luz_y_clima", "Sol, oscuridad, luna y pronóstico de las próximas horas.", {}),
     _fn("sitrep", "Resumen de lo que pasó en los últimos minutos.", {"minutos": {"type": "integer", "minimum": 1, "maximum": 60}}),
     _fn("capa_juego", "Objetos de la capa de juego (con id) y propuestas pendientes.", {}),
+    _fn("linea_de_vista", "Dice si hay línea de vista entre dos puntos (necesita DTED).", {
+        "desde": _LUGAR, "hasta": _LUGAR,
+    }, ["desde", "hasta"]),
     _fn("marcar_punto", "Pone un punto en el mapa de todos.", {
         "nombre": _S, "lugar": _LUGAR,
-        "tipo": {"type": "string", "enum": ["objetivo", "peligro", "reunion", "medico", "spawn", "enemigo", "info"]},
+        "tipo": {"type": "string", "enum": ["objetivo", "peligro", "reunion", "medico", "spawn", "enemigo", "aliado", "desconocido", "info"]},
         "nota": _S,
     }, ["nombre", "lugar", "tipo"]),
     _fn("dibujar_zona", "Dibuja un círculo en el mapa de todos.", {
@@ -51,6 +57,14 @@ TOOLS = [
     }, ["objetivo", "estado"]),
     _fn("mover", "Mueve un objeto de la capa de juego.", {"objeto": _S, "lugar": _LUGAR}, ["objeto", "lugar"]),
     _fn("borrar", "Borra un objeto de la capa de juego.", {"objeto": _S}, ["objeto"]),
+    _fn("reportar_contacto", "Publica un contacto que se borra solo en 10 minutos.", {
+        "tipo": {"type": "string", "enum": ["infanteria", "vehiculo", "dron", "francotirador", "desconocido"]},
+        "cantidad": {"type": "integer", "minimum": 1, "maximum": 50},
+        "lugar": _LUGAR, "nota": _S,
+    }, ["tipo", "lugar"]),
+    _fn("ruta_cubierta", "Traza una ruta poco visible entre dos puntos (necesita mapa de visibilidad).", {
+        "desde": _LUGAR, "hasta": _LUGAR,
+    }, ["desde", "hasta"]),
     _fn("deshacer", "Deshace tu último cambio en el mapa.", {}),
     _fn("programar_aviso", "Programa un mensaje para dentro de N minutos.", {
         "minutos": {"type": "integer", "minimum": 1, "maximum": 240}, "texto": _S,
@@ -61,9 +75,16 @@ TOOLS = [
         "numero": {"type": "integer"}, "aceptar": {"type": "boolean"},
     }, ["numero", "aceptar"]),
 ]
-WRITE_TOOLS = frozenset({"marcar_punto", "dibujar_zona", "estado_objetivo", "mover", "borrar"})
+WRITE_TOOLS = frozenset({"marcar_punto", "dibujar_zona", "estado_objetivo", "mover", "borrar", "ruta_cubierta"})
 
-_TIPOS = ("objetivo", "peligro", "reunion", "medico", "spawn", "enemigo", "info")
+_TIPOS = ("objetivo", "peligro", "reunion", "medico", "spawn", "enemigo", "aliado", "desconocido", "info")
+_CONTACTS = ("infanteria", "vehiculo", "dron", "francotirador", "desconocido")
+_CONTACT_LABEL = {"infanteria": "infantería", "vehiculo": "vehículo", "dron": "dron",
+                  "francotirador": "francotirador", "desconocido": "desconocido"}
+_CONTACT_COT = {"infanteria": "a-h-G-U-C-I", "vehiculo": "a-h-G-E-V", "dron": "a-h-A-M-F-Q",
+                "francotirador": "a-h-G-U-C-I", "desconocido": "a-u-G"}
+_SYMBOL_COT = {"enemigo": "a-h-G-U-C-I", "aliado": "a-f-G-U-C-I", "desconocido": "a-u-G"}
+_SYMBOL_COLOR = {"aliado": "#34c759", "desconocido": "#ffcc00"}
 _ZONAS = ("zona", "peligro", "objetivo")
 _ESTADOS = ("libre", "nuestro", "enemigo", "disputado")
 _PARA = ("todos", "autorizados")
@@ -86,6 +107,9 @@ class ToolContext:
     events: EventLog
     command_context: Context
     writes_left: int = 5
+    dem: object = None
+    exposure: object = None
+    heights: object = None
 
 
 class _Missing(Exception):
@@ -118,6 +142,25 @@ def proposal_notice(p):
     summary = p.get("summary", "?")
     n = p.get("n", "?")
     return f"{author} propone: {summary}. #{n} → responde ok {n} o no {n}"
+
+
+def load_heights(path):
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    feats = data.get("features") if isinstance(data, dict) else None
+    out = {}
+    for feat in feats if isinstance(feats, list) else []:
+        props = feat.get("properties") if isinstance(feat, dict) else None
+        if not isinstance(props, dict):
+            continue
+        name = props.get("name")
+        height = props.get("height_m")
+        if not isinstance(name, str) or name.strip() == "":
+            continue
+        if isinstance(height, bool) or not isinstance(height, (int, float)):
+            continue
+        out[name] = float(height)
+    return out
 
 
 def execute(name, args, actor, ctx):
@@ -242,6 +285,25 @@ def _desc(props):
 
 def _local_hhmm(at, offset_h):
     return (at + timedelta(hours=offset_h)).strftime("%H:%M")
+
+
+def _parse_iso(raw):
+    text = str(raw or "")
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        at = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if at.tzinfo is None:
+        return at.replace(tzinfo=timezone.utc)
+    return at
+
+
+def _iso_z(at):
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _donde_esta(args, actor, ctx):
@@ -372,12 +434,16 @@ def _capa_juego(args, actor, ctx):
 def _point_color(tipo):
     if tipo == "objetivo":
         return COLORS["objetivo:libre"]
+    if tipo in _SYMBOL_COLOR:
+        return _SYMBOL_COLOR[tipo]
     return COLORS[tipo]
 
 
 def _point_props(nombre, kind, tipo, nota, author, color, folder):
     props = {"name": nombre, "folder": folder, "kind": kind, "tipo": tipo,
              "description": nota, "author": author, "marker-color": color}
+    if tipo in _SYMBOL_COT:
+        props["cot_type"] = _SYMBOL_COT[tipo]
     if kind == "objetivo":
         props["status"] = "libre"
     return props
@@ -390,6 +456,39 @@ def _zone_props(nombre, kind, nota, author, color, opacity, folder):
     if kind == "objetivo":
         props["status"] = "libre"
     return props
+
+
+def _origin_height(ctx, label):
+    heights = ctx.heights or {}
+    raw = heights.get(label, 1.7)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return 1.7
+    return float(raw)
+
+
+def _linea_de_vista(args, actor, ctx):
+    desde = _req_str(args, "desde", _REF_LIMIT)
+    hasta = _req_str(args, "hasta", _REF_LIMIT)
+    fa = _resolve(ctx, desde)
+    if isinstance(fa, str):
+        return fa
+    fb = _resolve(ctx, hasta)
+    if isinstance(fb, str):
+        return fb
+    if ctx.dem is None:
+        return "No tengo datos de elevación cargados."
+    vis, blocked, dist = line_of_sight(
+        ctx.dem, fa.lat, fa.lon, _origin_height(ctx, fa.label),
+        fb.lat, fb.lon, 1.7,
+    )
+    if vis is None:
+        return "No tengo elevación en ese punto."
+    span = format_distance(dist)
+    if vis:
+        return f"Desde {fa.label} a {fb.label} ({span}): visible."
+    gap = format_distance(blocked)
+    return (f"Desde {fa.label} a {fb.label} ({span}): no visible, "
+            f"lo tapa el terreno a {gap} de {fa.label}.")
 
 
 def _propose(ctx, actor, op, op_args, summary, geom=None, props=None):
@@ -515,6 +614,87 @@ def _borrar(args, actor, ctx):
     return f"Borrado {props.get('name', ref)} ({props.get('id', '?')})."
 
 
+def _recent_contact(ctx, actor, now):
+    for feat in ctx.layer.features(FOLDER_GAME):
+        props = feat.get("properties", {})
+        if props.get("kind") != "contacto" or props.get("author_uid") != actor.uid:
+            continue
+        created = _parse_iso(props.get("created"))
+        if created is not None and (now - created).total_seconds() < 20:
+            return True
+    return False
+
+
+def _reportar_contacto(args, actor, ctx):
+    tipo = _req_enum(args, "tipo", _CONTACTS)
+    cantidad = _opt_int(args, "cantidad", 1, 1, 50)
+    lugar = _req_str(args, "lugar", _REF_LIMIT)
+    nota = _opt_str(args, "nota", 200)
+    found = _resolve(ctx, lugar)
+    if isinstance(found, str):
+        return found
+    now = _now(ctx)
+    if _recent_contact(ctx, actor, now):
+        return "Espera unos segundos antes de otro reporte."
+    nombre = f"{cantidad} {_CONTACT_LABEL[tipo]}"
+    expires = now + timedelta(minutes=10)
+    props = {"name": nombre, "folder": FOLDER_GAME, "kind": "contacto",
+             "cot_type": _CONTACT_COT[tipo], "stale_minutes": 10,
+             "expires": _iso_z(expires), "description": nota, "author": actor.callsign}
+    geom = {"type": "Point", "coordinates": [found.lon, found.lat]}
+    ctx.layer.add_feature(props, geom, now, actor.uid)
+    offset = ctx.command_context.utc_offset_h
+    moment = _local_hhmm(now, offset)
+    ctx.layer.add_announcement(now, f"CONTACTO: {nombre} en {found.label} ({actor.callsign}, {moment}).", "todos")
+    return f"Contacto publicado: {nombre} en {found.label}. Se borra a las {_local_hhmm(expires, offset)}."
+
+
+def _path_length_m(path):
+    total = 0.0
+    for i in range(1, len(path)):
+        total += haversine_m(path[i - 1][0], path[i - 1][1], path[i][0], path[i][1])
+    return total
+
+
+def _route_props(nombre, author, color, folder):
+    return {"name": nombre, "folder": folder, "kind": "ruta", "author": author,
+            "stroke": color, "stroke-width": 4, "labels": True}
+
+
+def _ruta_cubierta(args, actor, ctx):
+    desde = _req_str(args, "desde", _REF_LIMIT)
+    hasta = _req_str(args, "hasta", _REF_LIMIT)
+    if not _take_write(ctx):
+        return _LIMITE
+    fa = _resolve(ctx, desde)
+    if isinstance(fa, str):
+        return fa
+    fb = _resolve(ctx, hasta)
+    if isinstance(fb, str):
+        return fb
+    if ctx.exposure is None:
+        return "No tengo el mapa de visibilidad cargado."
+    if cell_of(ctx.exposure, fa.lat, fa.lon) is None or cell_of(ctx.exposure, fb.lat, fb.lon) is None:
+        return "Ese punto queda fuera del mapa de visibilidad."
+    path = covered_route(ctx.exposure, fa.lat, fa.lon, fb.lat, fb.lon)
+    if not path:
+        return "No encontré una ruta entre esos puntos."
+    dist = format_distance(_path_length_m(path))
+    pct = round(exposed_fraction(ctx.exposure, path) * 100)
+    summary = f"trazar ruta cubierta {fa.label} → {fb.label}"
+    name = f"Ruta cubierta {fa.label}→{fb.label}"
+    geom = {"type": "LineString", "coordinates": [[lon, lat] for lat, lon in path]}
+    if not _can(actor):
+        props = _route_props(name, actor.callsign, COLORS["propuesta"], FOLDER_PROPOSALS)
+        replay = {"desde": desde, "hasta": hasta}
+        return _propose(ctx, actor, "ruta_cubierta", replay, summary, geom, props)
+    props = _route_props(name, actor.callsign, "#34c759", FOLDER_GAME)
+    feat = ctx.layer.add_feature(props, geom, _now(ctx), actor.uid)
+    ctx.events.add("mapa", f"{actor.callsign}: {summary}", _now(ctx))
+    fid = feat["properties"]["id"]
+    return f"Ruta cubierta {fa.label} → {fb.label} dibujada ({dist}, {pct} % expuesta). id {fid}."
+
+
 def _deshacer(args, actor, ctx):
     if not _take_write(ctx):
         return _LIMITE
@@ -565,7 +745,8 @@ def _confirmar_propuesta(args, actor, ctx):
     if not aceptar:
         return f"Propuesta #{numero} descartada."
     again = Actor(prop["author_uid"], prop["author"], authorized=True)
-    fresh = ToolContext(ctx.layer, ctx.events, ctx.command_context, writes_left=1)
+    fresh = ToolContext(ctx.layer, ctx.events, ctx.command_context, writes_left=1,
+                        dem=ctx.dem, exposure=ctx.exposure, heights=ctx.heights)
     result = execute(prop["op"], prop.get("args") or {}, again, fresh)
     return f"Propuesta #{numero} aceptada: {result}"
 
@@ -578,11 +759,14 @@ _DISPATCH = {
     "luz_y_clima": _luz_y_clima,
     "sitrep": _sitrep,
     "capa_juego": _capa_juego,
+    "linea_de_vista": _linea_de_vista,
     "marcar_punto": _marcar_punto,
     "dibujar_zona": _dibujar_zona,
     "estado_objetivo": _estado_objetivo,
     "mover": _mover,
     "borrar": _borrar,
+    "reportar_contacto": _reportar_contacto,
+    "ruta_cubierta": _ruta_cubierta,
     "deshacer": _deshacer,
     "programar_aviso": _programar_aviso,
     "anunciar": _anunciar,

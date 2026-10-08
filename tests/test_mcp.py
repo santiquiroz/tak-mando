@@ -36,6 +36,12 @@ def test_initialize_and_list(tmp_path):
     assert "marcar_punto" in names and "inputSchema" in _rpc(server, "tools/list")["result"]["tools"][0]
 
 
+def test_new_terrain_tools_listed(tmp_path):
+    server, _ = _server(tmp_path)
+    names = [t["name"] for t in _rpc(server, "tools/list")["result"]["tools"]]
+    assert "linea_de_vista" in names and "reportar_contacto" in names and "ruta_cubierta" in names
+
+
 def test_call_writes_layer_as_authorized(tmp_path):
     server, layer = _server(tmp_path)
     res = _rpc(server, "tools/call", {"name": "marcar_punto", "arguments": {"nombre": "EXFIL", "lugar": "E5", "tipo": "reunion"}})

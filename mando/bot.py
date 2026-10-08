@@ -36,7 +36,9 @@ from mando.cot import (
     parse_event,
     split_stream,
 )
+from mando.elevation import load_dted
 from mando.events import EventLog
+from mando.exposure import load_exposure
 from mando.grid import grid_ref
 from mando.layer import Layer
 from mando.roster import Roster
@@ -317,6 +319,9 @@ class Bot:
         admin_uids=(),
         status_path=None,
         events=None,
+        dem=None,
+        exposure=None,
+        heights=None,
     ):
         self.uid = uid
         self.callsign = callsign
@@ -353,6 +358,9 @@ class Bot:
         self.status_path = status_path
         self.base_zones = list(zones)
         self.events = events or EventLog()
+        self.dem = dem
+        self.exposure = exposure
+        self.heights = heights
         if self.layer is not None:
             for admin in admin_uids:
                 self.layer.authorize(admin)
@@ -623,6 +631,7 @@ class Bot:
         out.extend(brainbot.drain(self, now))
         out.extend(brainbot.due_announcements(self, now))
         out.extend(brainbot.notify_proposals(self, now))
+        brainbot.expire_features(self, now)
         if brainbot.reload_hazards(self) == "corrupt":
             _log("capa de juego dañada, conservo los peligros anteriores")
         brainbot.write_status(self, now)
@@ -738,6 +747,17 @@ def _backoff(failures: int) -> int:
     return _BACKOFFS[min(failures, len(_BACKOFFS) - 1)]
 
 
+def _load_optional(args, name, loader, label):
+    path = getattr(args, name, None)
+    if not path:
+        return None
+    try:
+        return loader(path)
+    except (OSError, ValueError) as exc:
+        _log(f"{label} ({exc})")
+        return None
+
+
 def run(args) -> int:
     workdir = tempfile.mkdtemp(prefix="tak-mando-")
     os.chmod(workdir, 0o700)
@@ -748,6 +768,18 @@ def run(args) -> int:
         port = getattr(args, "port", None) or info.port
         zones = load_zones(args.zones)
         places = load_places(args.zones)
+        dem = _load_optional(args, "dted", load_dted, "sin DTED")
+        exposure = _load_optional(args, "exposure", load_exposure, "sin mapa de visibilidad")
+        heights = None
+        buildings_path = getattr(args, "buildings", None)
+        if buildings_path:
+            try:
+                extra = load_places(buildings_path)
+                heights = tools.load_heights(buildings_path)
+            except (OSError, ValueError) as exc:
+                _log(f"sin edificios ({exc})")
+            else:
+                places = places + extra
         share_path = getattr(args, "share_package", None)
         package = None
         if share_path:
@@ -836,6 +868,9 @@ def run(args) -> int:
             executor=executor,
             admin_uids=tuple(getattr(args, "admin_uid", None) or ()),
             status_path=Path(status_arg) if status_arg else None,
+            dem=dem,
+            exposure=exposure,
+            heights=heights,
         )
         _log(
             f"zonas: {len(zones)} peligros, {len(places)} lugares "

@@ -18,6 +18,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("package", help="paquete de conexión .zip del bot")
     parser.add_argument("--zones", required=True,
                         help="GeoJSON del terreno (polígonos y lugares)")
+    parser.add_argument("--dted", default=None,
+                        help="DTED de elevación para línea de vista")
+    parser.add_argument("--exposure", default=None,
+                        help="JSON de visibilidad para rutas cubiertas")
+    parser.add_argument("--buildings", default=None,
+                        help="GeoJSON de edificios (lugares y alturas)")
     parser.add_argument("--host", default=None,
                         help="servidor TAK (por defecto, el del paquete)")
     parser.add_argument("--port", type=int, default=None,

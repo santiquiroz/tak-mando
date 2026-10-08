@@ -120,7 +120,8 @@ def confirm_reply(bot, chat, sender, matched, now, sun):
         )
     actor = tools.Actor(sender, callsign, authorized=True)
     tctx = tools.ToolContext(
-        bot.layer, bot.events, bot._context(now, sun, requester)
+        bot.layer, bot.events, bot._context(now, sun, requester),
+        dem=bot.dem, exposure=bot.exposure, heights=bot.heights,
     )
     try:
         text = tools.execute(
@@ -149,7 +150,8 @@ def ask_brain(bot, sender, callsign, text, route, now, sun):
     actor = tools.Actor(sender, callsign, authorized=authorized)
     requester = bot.roster.get(sender)
     tctx = tools.ToolContext(
-        bot.layer, bot.events, bot._context(now, sun, requester)
+        bot.layer, bot.events, bot._context(now, sun, requester),
+        dem=bot.dem, exposure=bot.exposure, heights=bot.heights,
     )
     cancel = threading.Event()
     future = bot.executor.submit(bot.brain.answer, actor, text, tctx, now, cancel)
@@ -261,6 +263,46 @@ def notify_proposals(bot, now):
                 player.callsign, text, now,
             ))
     return out
+
+
+def _parse_expires(raw):
+    text = str(raw or "")
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        at = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if at.tzinfo is None:
+        return at.replace(tzinfo=timezone.utc)
+    return at
+
+
+def expire_features(bot, now):
+    removed = []
+    if bot.layer is None:
+        return removed
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    try:
+        feats = bot.layer.features(FOLDER_GAME)
+    except (LayerError, OSError) as exc:
+        _log_layer_error(exc)
+        return removed
+    for feat in feats:
+        props = feat.get("properties", {}) if isinstance(feat, dict) else {}
+        exp = _parse_expires(props.get("expires"))
+        if exp is None or exp > now:
+            continue
+        try:
+            bot.layer.delete_feature(props.get("id"), "mando-bot")
+        except (LayerError, OSError) as exc:
+            _log_layer_error(exc)
+            continue
+        name = props.get("name", props.get("id"))
+        bot.events.add("contacto", f"Contacto retirado: {name}", now)
+        removed.append(name)
+    return removed
 
 
 def reload_hazards(bot):

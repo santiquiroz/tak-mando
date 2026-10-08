@@ -237,6 +237,14 @@ def test_abandoned_worker_gets_cancel(tmp_path):
     assert brain.cancels[0] is not None and brain.cancels[0].is_set()
 
 
+def test_expired_contacts_are_removed_on_tick(tmp_path):
+    bot, layer = _bot(tmp_path, FakeBrain())
+    layer.add_feature({"name": "3 infantería", "folder": "Juego", "kind": "contacto", "expires": "2026-10-10T21:55:00Z"},
+                      {"type": "Point", "coordinates": [-75.49, 5.16]}, NOW, "u")
+    bot.tick(NOW)
+    assert layer.features("Juego") == []
+
+
 def test_bare_mando_prefix_does_nothing(tmp_path):
     brain = FakeBrain()
     bot, _ = _bot(tmp_path, brain)
