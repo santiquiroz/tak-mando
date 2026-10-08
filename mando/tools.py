@@ -261,6 +261,19 @@ def _resolve(ctx, lugar):
     return resolve_place(lugar, grid=cc.grid, places=cc.places, players=cc.players, requester=cc.requester)
 
 
+def _label(args, campo, fallback):
+    raw = args.get(campo)
+    if isinstance(raw, str):
+        text = clean(raw, _REF_LIMIT)
+        if text != "":
+            return text
+    return fallback
+
+
+def _pinned(lat, lon):
+    return f"{lat:.6f},{lon:.6f}"
+
+
 def _match(layer, ref):
     found = layer.matches(ref, FOLDER_GAME)
     if len(found) == 1:
@@ -501,17 +514,19 @@ def _marcar_punto(args, actor, ctx):
     found = _resolve(ctx, lugar)
     if isinstance(found, str):
         return found
+    label = _label(args, "lugar_etiqueta", found.label)
     kind = "objetivo" if tipo == "objetivo" else "punto"
-    summary = f"marcar {nombre} ({tipo}) en {found.label}"
+    summary = f"marcar {nombre} ({tipo}) en {label}"
     geom = {"type": "Point", "coordinates": [found.lon, found.lat]}
     if not _can(actor):
         props = _point_props(nombre, kind, tipo, nota, actor.callsign, COLORS["propuesta"], FOLDER_PROPOSALS)
-        replay = {"nombre": nombre, "lugar": lugar, "tipo": tipo, "nota": nota}
+        replay = {"nombre": nombre, "lugar": _pinned(found.lat, found.lon),
+                  "lugar_etiqueta": label, "tipo": tipo, "nota": nota}
         return _propose(ctx, actor, "marcar_punto", replay, summary, geom, props)
     props = _point_props(nombre, kind, tipo, nota, actor.callsign, _point_color(tipo), FOLDER_GAME)
     feat = ctx.layer.add_feature(props, geom, _now(ctx), actor.uid)
     ctx.events.add("mapa", f"{actor.callsign}: {summary}", _now(ctx))
-    return f"Marcado {nombre} ({tipo}) en {found.label}. id {feat['properties']['id']}."
+    return f"Marcado {nombre} ({tipo}) en {label}. id {feat['properties']['id']}."
 
 
 def _dibujar_zona(args, actor, ctx):
@@ -525,18 +540,20 @@ def _dibujar_zona(args, actor, ctx):
     found = _resolve(ctx, lugar)
     if isinstance(found, str):
         return found
+    label = _label(args, "lugar_etiqueta", found.label)
     geom = {"type": "Polygon", "coordinates": [circle(found.lat, found.lon, radio)]}
-    summary = f"dibujar {nombre} ({kind}, {radio} m) en {found.label}"
+    summary = f"dibujar {nombre} ({kind}, {radio} m) en {label}"
     if not _can(actor):
         props = _zone_props(nombre, kind, nota, actor.callsign, COLORS["propuesta"], 0.1, FOLDER_PROPOSALS)
-        replay = {"nombre": nombre, "lugar": lugar, "radio_m": radio, "kind": kind, "nota": nota}
+        replay = {"nombre": nombre, "lugar": _pinned(found.lat, found.lon),
+                  "lugar_etiqueta": label, "radio_m": radio, "kind": kind, "nota": nota}
         return _propose(ctx, actor, "dibujar_zona", replay, summary, geom, props)
     color = COLORS["objetivo:libre"] if kind == "objetivo" else COLORS[kind]
     props = _zone_props(nombre, kind, nota, actor.callsign, color, 0.2, FOLDER_GAME)
     feat = ctx.layer.add_feature(props, geom, _now(ctx), actor.uid)
     ctx.events.add("mapa", f"{actor.callsign}: {summary}", _now(ctx))
     fid = feat["properties"]["id"]
-    return f"Zona {nombre} ({kind}, {radio} m) en {found.label}. id {fid}."
+    return f"Zona {nombre} ({kind}, {radio} m) en {label}. id {fid}."
 
 
 def _estado_objetivo(args, actor, ctx):
@@ -662,6 +679,8 @@ def _ruta_cubierta(args, actor, ctx):
     fb = _resolve(ctx, hasta)
     if isinstance(fb, str):
         return fb
+    la = _label(args, "desde_etiqueta", fa.label)
+    lb = _label(args, "hasta_etiqueta", fb.label)
     if ctx.exposure is None:
         return "No tengo el mapa de visibilidad cargado."
     if cell_of(ctx.exposure, fa.lat, fa.lon) is None or cell_of(ctx.exposure, fb.lat, fb.lon) is None:
@@ -671,18 +690,19 @@ def _ruta_cubierta(args, actor, ctx):
         return "No encontré una ruta entre esos puntos."
     dist = format_distance(_path_length_m(path))
     pct = round(exposed_fraction(ctx.exposure, path) * 100)
-    summary = f"trazar ruta cubierta {fa.label} → {fb.label}"
-    name = f"Ruta cubierta {fa.label}→{fb.label}"
+    summary = f"trazar ruta cubierta {la} → {lb}"
+    name = f"Ruta cubierta {la}→{lb}"
     geom = {"type": "LineString", "coordinates": [[lon, lat] for lat, lon in path]}
     if not _can(actor):
         props = _route_props(name, actor.callsign, COLORS["propuesta"], FOLDER_PROPOSALS)
-        replay = {"desde": desde, "hasta": hasta}
+        replay = {"desde": _pinned(fa.lat, fa.lon), "desde_etiqueta": la,
+                  "hasta": _pinned(fb.lat, fb.lon), "hasta_etiqueta": lb}
         return _propose(ctx, actor, "ruta_cubierta", replay, summary, geom, props)
     props = _route_props(name, actor.callsign, "#34c759", FOLDER_GAME)
     feat = ctx.layer.add_feature(props, geom, _now(ctx), actor.uid)
     ctx.events.add("mapa", f"{actor.callsign}: {summary}", _now(ctx))
     fid = feat["properties"]["id"]
-    return f"Ruta cubierta {fa.label} → {fb.label} dibujada ({dist}, {pct} % expuesta). id {fid}."
+    return f"Ruta cubierta {la} → {lb} dibujada ({dist}, {pct} % expuesta). id {fid}."
 
 
 def _deshacer(args, actor, ctx):

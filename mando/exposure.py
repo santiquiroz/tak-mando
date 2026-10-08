@@ -24,6 +24,7 @@ class Exposure:
 def load_exposure(path):
     with open(path, encoding="utf-8") as f:
         doc = json.load(f)
+    head = f"Exposición inválida: {path}: "
     try:
         north = doc["north"]
         west = doc["west"]
@@ -32,22 +33,27 @@ def load_exposure(path):
         cols = doc["cols"]
         count = doc["count"]
     except (KeyError, TypeError):
-        raise ValueError("bad exposure doc")
+        raise ValueError(head + "documento incompleto")
     if isinstance(north, bool) or not isinstance(north, (int, float)):
-        raise ValueError("bad exposure doc")
+        raise ValueError(head + "north inválido")
     if isinstance(west, bool) or not isinstance(west, (int, float)):
-        raise ValueError("bad exposure doc")
+        raise ValueError(head + "west inválido")
     if isinstance(cell_m, bool) or not isinstance(cell_m, (int, float)) or cell_m <= 0:
-        raise ValueError("bad exposure doc")
+        raise ValueError(head + "cell_m inválido")
     if isinstance(rows, bool) or not isinstance(rows, int) or rows <= 0:
-        raise ValueError("bad exposure doc")
+        raise ValueError(head + "rows inválido")
     if isinstance(cols, bool) or not isinstance(cols, int) or cols <= 0:
-        raise ValueError("bad exposure doc")
+        raise ValueError(head + "cols inválido")
     if not isinstance(count, list) or len(count) != rows:
-        raise ValueError("bad exposure doc")
+        raise ValueError(head + "count no coincide con rows")
     for row in count:
         if not isinstance(row, list) or len(row) != cols:
-            raise ValueError("bad exposure doc")
+            raise ValueError(head + "fila no coincide con cols")
+        for cell in row:
+            if isinstance(cell, bool) or not isinstance(cell, int):
+                raise ValueError(head + "celda no entera")
+            if cell < 0:
+                raise ValueError(head + "celda negativa")
     return Exposure(float(north), float(west), float(cell_m), rows, cols, count)
 
 

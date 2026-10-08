@@ -1,4 +1,7 @@
 import json
+
+import pytest
+
 from mando.exposure import Exposure, cell_of, center_of, covered_route, exposed_fraction, load_exposure
 
 
@@ -29,7 +32,23 @@ def test_outside_and_no_path(tmp_path):
 
 
 def test_bad_doc(tmp_path):
-    import pytest
     p = tmp_path / "e.json"; p.write_text('{"north": 5}', encoding="utf-8")
     with pytest.raises(ValueError):
         load_exposure(p)
+
+
+@pytest.mark.parametrize("bad", ["1", None, -1, True])
+def test_invalid_cell_values_rejected(tmp_path, bad):
+    doc = {"north": 5.17, "west": -75.5, "cell_m": 10, "rows": 2, "cols": 2,
+           "count": [[0, 0], [0, bad]]}
+    p = tmp_path / "e.json"; p.write_text(json.dumps(doc), encoding="utf-8")
+    with pytest.raises(ValueError) as err:
+        load_exposure(p)
+    msg = str(err.value)
+    assert "Exposición inválida" in msg
+    assert str(p) in msg
+
+
+def test_valid_grid_still_loads(tmp_path):
+    e = _exp(tmp_path, [[0, 1], [2, 0]])
+    assert e.count == [[0, 1], [2, 0]]

@@ -8,8 +8,8 @@ from test_elevation import _write_dted
 from mando.commands import Context
 from mando.elevation import line_of_sight, load_dted
 from mando.events import EventLog
-from mando.exposure import load_exposure
-from mando.geo import format_distance, haversine_m
+from mando.exposure import cell_of, load_exposure
+from mando.geo import centroid, format_distance, haversine_m
 from mando.grid import Grid
 from mando.places import cell_center
 from mando.layer import Layer
@@ -286,4 +286,87 @@ def test_guest_covered_route_proposal_replays(ctx, tmp_path):
     coords = game[0]["geometry"]["coordinates"]
     a_lat, a_lon = cell_center(GRID, "E5")
     b_lat, b_lon = cell_center(GRID, "E7")
-    assert coords[0] == [a_lon, a_lat] and coords[-1] == [b_lon, b_lat]
+    assert coords[0][0] == pytest.approx(a_lon, abs=1e-6)
+    assert coords[0][1] == pytest.approx(a_lat, abs=1e-6)
+    assert coords[-1][0] == pytest.approx(b_lon, abs=1e-6)
+    assert coords[-1][1] == pytest.approx(b_lat, abs=1e-6)
+
+
+def _guest_at(ctx, ref):
+    lat, lon = cell_center(GRID, ref)
+    guest = Player("u-guest", "Recon", lat, lon, NOW, None)
+    cc = ctx.command_context
+    cc.requester = guest
+    cc.players = [ME, guest]
+    return guest
+
+
+def _confirmer_at(ctx, guest, guest_ref, boss_ref):
+    glat, glon = cell_center(GRID, guest_ref)
+    guest.lat, guest.lon = glat, glon
+    blat, blon = cell_center(GRID, boss_ref)
+    boss = Player("u-admin", "santi", blat, blon, NOW, None)
+    cc = ctx.command_context
+    cc.players = [boss, guest]
+    cc.requester = boss
+
+
+def test_ruta_proposal_pins_relative_desde(ctx, tmp_path):
+    doc = {"north": 5.1650, "west": -75.4960, "cell_m": 50, "rows": 18, "cols": 18,
+           "count": [[0] * 18 for _ in range(18)]}
+    p = tmp_path / "exp.json"
+    p.write_text(json.dumps(doc), encoding="utf-8")
+    ctx.exposure = load_exposure(p)
+    p1_lat, p1_lon = cell_center(GRID, "C3")
+    p1_lat += 0.0002
+    p1_lon += 0.0002
+    guest = Player("u-guest", "Recon", p1_lat, p1_lon, NOW, None)
+    cc = ctx.command_context
+    cc.requester = guest
+    cc.players = [ME, guest]
+    out = execute("ruta_cubierta", {"desde": "aquí", "hasta": "E7"}, GUEST, ctx)
+    assert out.startswith("Propuesta #1")
+    preview_name = ctx.layer.features("Propuestas")[0]["properties"]["name"]
+    args = ctx.layer.proposals()[0]["args"]
+    assert "desde_etiqueta" in args and "hasta_etiqueta" in args
+    assert "aquí" not in json.dumps(args, ensure_ascii=False)
+    _confirmer_at(ctx, guest, "A1", "H8")
+    execute("confirmar_propuesta", {"numero": 1, "aceptar": True}, ADMIN, ctx)
+    game = ctx.layer.features("Juego")
+    assert len(game) == 1
+    lon, lat = game[0]["geometry"]["coordinates"][0]
+    assert cell_of(ctx.exposure, lat, lon) == cell_of(ctx.exposure, p1_lat, p1_lon)
+    assert game[0]["properties"]["name"] == preview_name
+
+
+def test_marcar_proposal_pins_aqui(ctx):
+    p1_lat, p1_lon = cell_center(GRID, "C3")
+    guest = _guest_at(ctx, "C3")
+    out = execute("marcar_punto", {"nombre": "RALLY", "lugar": "aquí", "tipo": "reunion"}, GUEST, ctx)
+    assert out.startswith("Propuesta #1")
+    _confirmer_at(ctx, guest, "A1", "H8")
+    execute("confirmar_propuesta", {"numero": 1, "aceptar": True}, ADMIN, ctx)
+    game = ctx.layer.features("Juego")
+    assert len(game) == 1
+    lon, lat = game[0]["geometry"]["coordinates"]
+    assert lat == pytest.approx(p1_lat, abs=2e-6)
+    assert lon == pytest.approx(p1_lon, abs=2e-6)
+    assert game[0]["properties"]["name"] == "RALLY"
+
+
+def test_zona_proposal_pins_aqui(ctx):
+    p1_lat, p1_lon = cell_center(GRID, "C3")
+    guest = _guest_at(ctx, "C3")
+    out = execute("dibujar_zona", {"nombre": "Z", "lugar": "aquí", "radio_m": 50, "kind": "zona"}, GUEST, ctx)
+    assert out.startswith("Propuesta #1")
+    _confirmer_at(ctx, guest, "A1", "H8")
+    execute("confirmar_propuesta", {"numero": 1, "aceptar": True}, ADMIN, ctx)
+    game = ctx.layer.features("Juego")
+    assert len(game) == 1
+    lat, lon = centroid(game[0]["geometry"]["coordinates"][0])
+    assert lat == pytest.approx(p1_lat, abs=1e-5)
+    assert lon == pytest.approx(p1_lon, abs=1e-5)
+
+
+def test_tool_schemas_hide_etiqueta_keys():
+    assert "_etiqueta" not in json.dumps(TOOLS, ensure_ascii=False)
