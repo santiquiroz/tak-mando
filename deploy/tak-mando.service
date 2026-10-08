@@ -10,7 +10,7 @@ RestartSec=15
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/etc/tak-mando/llm.env
 WorkingDirectory=/opt/tak-mando
-ExecStart=/usr/bin/python3 -m mando /etc/tak-mando/mando.zip --zones /etc/tak-mando/campo.geojson --layer /var/lib/tak-mando/juego.geojson --state /var/lib/tak-mando/mando-state.json --status /var/lib/tak-mando/mando-status.json --admin-uid ANDROID-xxxxxxxx --llm-url auto --event-name "OP MEDUSA"
+ExecStart=/usr/bin/python3 -m mando /etc/tak-mando/mando.zip --zones /etc/tak-mando/campo.geojson --layer /var/lib/tak-mando/juego.geojson --state /var/lib/tak-mando/mando-state.json --status /var/lib/tak-mando/mando-status.json --dted /var/lib/tak-mando/campo.dt2 --exposure /var/lib/tak-mando/exposure.json --buildings /var/lib/tak-mando/edificios.geojson --admin-uid ANDROID-xxxxxxxx --llm-url auto --event-name "OP MEDUSA"
 
 [Install]
 WantedBy=multi-user.target

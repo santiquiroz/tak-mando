@@ -166,6 +166,8 @@ Full spec: [docs/superpowers/specs/2026-10-08-mando-cerebro-design.md](superpowe
 - `mando/layer.py`: game layer GeoJSON plus state, under a file lock with atomic writes.
 - `mando/places.py`: resolves a place word (grid square, building, callsign, `aquí`, `lat,lon`) to coordinates.
 - `mando/events.py`: short in-memory event log used for SITREP.
+- `mando/elevation.py`: DTED2 reader with bilinear sampling and line of sight.
+- `mando/exposure.py`: exposure grid with A* covered routes.
 - `mando/tools.py`: read and write tools with uid permission checks and proposals.
 - `mando/brain.py`: LLM client, tool loop and per-player memory.
 - `mando/brainbot.py`: chat routing to the brain, rate limits, proposal notices and status snapshots.

@@ -132,7 +132,7 @@ RestartSec=15
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/home/ots/.config/tak-mando/llm.env
 WorkingDirectory=/opt/tak-mando
-ExecStart=/usr/bin/python3 -m mando /etc/tak-mando/mando.zip --zones /etc/tak-mando/campo.geojson --layer /var/lib/tak-mando/juego.geojson --state /var/lib/tak-mando/mando-state.json --status /var/lib/tak-mando/mando-status.json --admin-uid ANDROID-xxxxxxxx --llm-url auto --event-name "OP MEDUSA"
+ExecStart=/usr/bin/python3 -m mando /etc/tak-mando/mando.zip --zones /etc/tak-mando/campo.geojson --layer /var/lib/tak-mando/juego.geojson --state /var/lib/tak-mando/mando-state.json --status /var/lib/tak-mando/mando-status.json --dted /var/lib/tak-mando/campo.dt2 --exposure /var/lib/tak-mando/exposure.json --buildings /var/lib/tak-mando/edificios.geojson --admin-uid ANDROID-xxxxxxxx --llm-url auto --event-name "OP MEDUSA"
 
 [Install]
 WantedBy=multi-user.target
@@ -213,6 +213,17 @@ Ejemplo con Claude Code:
 ```sh
 claude mcp add --scope user mando -- wsl.exe -d Ubuntu-24.04 -u ots --cd /path/to/tak-mando -- python3 -m mando.mcp --layer juego.geojson --state mando-state.json --status mando-status.json --zones campo.geojson --grid 5.1650,-75.4960,100,9,9
 ```
+
+### Herramientas de terreno
+
+- `linea_de_vista`: "¿me ven desde la torre sur si estoy en D7?" Línea de vista sobre un archivo DTED2 (1 segundo de arco). La altura del observador viene de las alturas de `--buildings`, nunca del texto del jugador. Responde visible o bloqueado, y dónde lo tapa el terreno.
+- `reportar_contacto`: "contacto, 3 enemigos en E6". Cualquier jugador puede reportar. El punto recibe un símbolo militar estándar (infantería `a-h-G-U-C-I`, vehículo `a-h-G-E-V`, dron `a-h-A-M-F-Q`, francotirador, desconocido `a-u-G`). Se anuncia a todos y se borra solo después de 10 minutos. Un reporte cada 20 s por jugador.
+- `ruta_cubierta`: "ruta cubierta de la llegada a la nave central". A* sobre una cuadrícula de exposición (cuántas torres ven cada celda de 10 m). Dibuja la ruta menos expuesta como una línea. Los no autorizados reciben una propuesta.
+- `marcar_punto` también acepta los tipos `aliado` y `desconocido`. `enemigo`, `aliado` y `desconocido` usan símbolos militares.
+
+Opciones para el bot y el MCP: `--dted PATH` (DTED2 `.dt2`), `--exposure PATH` (`exposure.json`), `--buildings PATH` (GeoJSON con polígonos de edificios y `height_m`). Los archivos ausentes o rotos nunca detienen el bot. La herramienta responde que el dato no está cargado.
+
+`tak/terrain.py` del proyecto Blindside genera estos archivos desde el modelo de elevación gratuito Copernicus GLO-30. Atribución: "Copernicus GLO-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided by ESA (Copernicus)".
 
 ## Notas de seguridad
 
