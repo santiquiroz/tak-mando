@@ -56,6 +56,20 @@ class Roster:
         self._by_uid[uid] = player
         return player
 
+    def contact(self, event, now):
+        # A player without a GPS fix reports 0,0: it is not on the map yet, but it is connected and can receive files.
+        typ = event.get("type") or ""
+        uid = event.get("uid")
+        callsign = (event.get("callsign") or "").strip()
+        stale = event.get("stale")
+        if not typ.startswith("a-f-G-U") or not callsign or not isinstance(uid, str):
+            return None
+        if stale is not None and stale <= now:
+            return None
+        if uid in self._ignore or uid.startswith(self._prefixes):
+            return None
+        return uid, callsign
+
     def players(self):
         return sorted(self._by_uid.values(), key=lambda p: p.callsign.lower())
 

@@ -383,31 +383,10 @@ class Bot:
                 player = self.roster.update(event, now)
             except Exception:
                 player = None
+            contact = self.roster.contact(event, now) if self.package is not None else None
+            if contact is not None:
+                out.extend(self._package_once(contact[0], contact[1], now))
             if player is not None:
-                if self.package is not None:
-                    sent = self._sent.setdefault(
-                        self.package.sha256, set()
-                    )
-                    if player.uid not in sent:
-                        out.append(fileshare_event(
-                            self.uid, self.callsign, player.uid,
-                            self.package.filename, self.package.name,
-                            self.package.url, self.package.size_bytes,
-                            self.package.sha256, now,
-                        ))
-                        out.append(dm_event(
-                            self.uid, self.callsign, player.uid,
-                            player.callsign,
-                            f'Te envié el paquete del campo '
-                            f'"{self.package.name}" (mapas satelitales '
-                            "y capa táctica). Acéptalo en la "
-                            "notificación de ATAK/iTAK. Si no te "
-                            "llegó, escribe !mapas.",
-                            now,
-                        ))
-                        sent.add(player.uid)
-                        if self.sent_state is not None:
-                            _save_sent_state(self.sent_state, self._sent)
                 for msg in self.geofence.check(player, now):
                     out.append(dm_event(
                         self.uid, self.callsign, player.uid,
@@ -421,6 +400,27 @@ class Bot:
                 elif reply is not None:
                     out.append(reply)
         return out
+
+    def _package_once(self, uid: str, callsign: str, now: datetime) -> list[str]:
+        sent = self._sent.setdefault(self.package.sha256, set())
+        if uid in sent:
+            return []
+        sent.add(uid)
+        if self.sent_state is not None:
+            _save_sent_state(self.sent_state, self._sent)
+        return [
+            fileshare_event(
+                self.uid, self.callsign, uid, self.package.filename, self.package.name,
+                self.package.url, self.package.size_bytes, self.package.sha256, now,
+            ),
+            dm_event(
+                self.uid, self.callsign, uid, callsign,
+                f'Te envié el paquete del campo "{self.package.name}" (mapas satelitales '
+                "y capa táctica). Acéptalo en la notificación de ATAK/iTAK. Si no te "
+                "llegó, escribe !mapas.",
+                now,
+            ),
+        ]
 
     def _command_reply(
         self, chat: dict, event: dict, now: datetime, sun: dict

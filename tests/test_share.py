@@ -239,3 +239,22 @@ def test_share_cli_flags():
     assert (args.share_package, args.share_name,
             args.share_url_base, args.share_state) == (
         "campo.zip", "Campo", "https://h:8443", "s.json")
+
+
+def test_player_without_gps_fix_still_gets_the_package(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from mando.bot import Bot, shared_package
+    from mando.cot import parse_event
+
+    zip_path = tmp_path / "campo.zip"
+    zip_path.write_bytes(b"PK fake")
+    now = datetime(2026, 10, 8, 13, 0, tzinfo=timezone.utc)
+    bot = Bot(package=shared_package(zip_path, "Campo", "https://tak.example:8443"))
+    no_fix = {"uid": "ANDROID-1", "type": "a-f-G-U-C", "callsign": "santi", "lat": 0.0, "lon": 0.0,
+              "stale": now + timedelta(minutes=2), "chat": None, "dest_uids": []}
+    sent = [parse_event(x) for x in bot.handle_event(no_fix, now)]
+    assert [e["type"] for e in sent] == ["b-f-t-r", "b-t-f"]
+    assert sent[0]["dest_uids"] == ["ANDROID-1"]
+    assert bot.roster.players() == []
+    assert bot.handle_event(no_fix, now + timedelta(seconds=5)) == []
