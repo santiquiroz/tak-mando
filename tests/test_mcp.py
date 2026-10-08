@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -71,14 +72,27 @@ def test_stdio_process(tmp_path):
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "estado_equipo", "arguments": {}}},
     ]
+    env = dict(os.environ)
+    env.pop("PYTHONIOENCODING", None)
     proc = subprocess.run(
         [sys.executable, "-m", "mando.mcp", "--layer", str(tmp_path / "juego.geojson"),
          "--state", str(tmp_path / "state.json"), "--status", str(tmp_path / "status.json"),
          "--zones", str(zones), "--grid", "5.1650,-75.4960,100,9,9"],
         input="\n".join(json.dumps(l) for l in lines) + "\nno-json\n",
-        capture_output=True, text=True, timeout=30, cwd=Path(__file__).resolve().parents[1],
+        capture_output=True, text=True, encoding="utf-8", env=env, timeout=30, cwd=Path(__file__).resolve().parents[1],
     )
     out = [json.loads(l) for l in proc.stdout.splitlines()]
-    assert [o.get("id") for o in out] == [1, 2, None]
-    assert out[2]["error"]["code"] == -32700
+    assert [o.get("id") for o in out] == [1, 2, 3, None]
+    assert out[3]["error"]["code"] == -32700
+    assert "está" in out[2]["result"]["content"][0]["text"]
+
+
+def test_tool_result_max_600_chars_with_stale_prefix(tmp_path, monkeypatch):
+    import mando.mcp as mcp_mod
+    server, _ = _server(tmp_path)
+    monkeypatch.setattr(mcp_mod, "execute", lambda name, args, actor, ctx: "x" * 600)
+    text = _rpc(server, "tools/call", {"name": "estado_equipo", "arguments": {}})["result"]["content"][0]["text"]
+    assert len(text) <= 600
+    assert text.startswith("(Sin datos de jugadores: el bot no está corriendo.)")

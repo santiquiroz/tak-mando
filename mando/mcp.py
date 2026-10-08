@@ -163,7 +163,7 @@ class McpServer:
         ctx = ToolContext(self._layer, events, self._context(now, players), writes_left=20)
         out = execute(name, args, _MCP_ACTOR, ctx)
         if name in _STALE_TOOLS:
-            out = _stale_prefix(age) + out
+            out = (_stale_prefix(age) + out)[:600]
         return {"content": [{"type": "text", "text": out}], "isError": False}
 
 
@@ -208,6 +208,10 @@ def _serve(server):
 
 
 def main(argv=None):
+    if hasattr(sys.stdin, "reconfigure"):
+        sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = _build_parser()
     args = parser.parse_args(argv)
     grid = None
