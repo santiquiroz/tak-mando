@@ -36,6 +36,26 @@ def _parse_args(raw):
     return None
 
 
+def _clean_tool_calls(calls):
+    cleaned = []
+    for item in calls:
+        cid = item.get("id", "") if isinstance(item, dict) else ""
+        fn = item.get("function", {}) if isinstance(item, dict) else {}
+        if not isinstance(fn, dict):
+            fn = {}
+        args = fn.get("arguments", "")
+        if isinstance(args, dict):
+            args = json.dumps(args)
+        elif not isinstance(args, str):
+            try:
+                args = json.dumps(args)
+            except (ValueError, TypeError):
+                args = ""
+        cleaned.append({"id": cid, "type": "function",
+                        "function": {"name": fn.get("name", ""), "arguments": args}})
+    return cleaned
+
+
 class LlmClient:
     def __init__(self, base_url, api_key, model, timeout_s=25, opener=urllib.request.urlopen):
         self.base_url = base_url
@@ -118,7 +138,8 @@ class Brain:
         reply = self.client.chat(messages, self.tools)
         calls = reply.get("tool_calls")
         if isinstance(calls, list) and calls:
-            messages.append(reply)
+            messages.append({"role": "assistant", "content": reply.get("content"),
+                             "tool_calls": _clean_tool_calls(calls)})
             for tool_msg in self._run_tools(calls, actor, ctx):
                 messages.append(tool_msg)
             return False, ""

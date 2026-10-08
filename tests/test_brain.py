@@ -177,3 +177,19 @@ def test_system_prompt_has_grid_buildings_hazards():
     assert "12 Torre sur (" in prompt and "Llegada" not in prompt
     assert "1 Tanque grande" in prompt
     assert len(prompt) < 4000
+
+
+def test_resent_assistant_message_is_allowlisted():
+    reply = call("sitrep", {})
+    reply.update({"reasoning": "pienso", "reasoning_content": "x", "refusal": None, "annotations": None})
+    brain, _ = _brain([reply, say("ok")])
+    assert brain.answer(ADMIN, "?", None, NOW) == "ok"
+    resent = brain.client.calls[1][-2]
+    assert set(resent) == {"role", "content", "tool_calls"}
+    assert resent["tool_calls"][0]["function"] == {"name": "sitrep", "arguments": "{}"}
+
+
+def test_empty_tool_calls_list_is_final_answer():
+    brain, executed = _brain([{"role": "assistant", "content": "listo ya", "tool_calls": [], "reasoning_content": "x"}])
+    assert brain.answer(ADMIN, "?", None, NOW) == "listo ya"
+    assert executed == []
