@@ -258,7 +258,7 @@ def _peligros(args, actor, ctx):
     names = []
     for feat in ctx.layer.features(FOLDER_GAME):
         props = feat.get("properties", {})
-        if props.get("kind") == "peligro" and props.get("name"):
+        if (props.get("kind") == "peligro" or props.get("tipo") == "peligro") and props.get("name"):
             names.append(props["name"])
     if not names:
         return base

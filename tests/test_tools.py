@@ -156,3 +156,8 @@ def test_sitrep_and_layer_listing(ctx):
     execute("marcar_punto", {"nombre": "A", "lugar": "E5", "tipo": "info"}, ADMIN, ctx)
     assert "santi: marcar A (info) en E5" in execute("sitrep", {"minutos": 5}, ADMIN, ctx)
     assert execute("capa_juego", {}, ADMIN, ctx).startswith("j-1 A (info, E5)")
+
+
+def test_hazards_include_layer_points(ctx):
+    execute("marcar_punto", {"nombre": "Pozo", "lugar": "E5", "tipo": "peligro"}, ADMIN, ctx)
+    assert "Pozo" in execute("peligros", {}, ADMIN, ctx)
