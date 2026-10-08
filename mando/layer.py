@@ -346,7 +346,11 @@ class Layer:
             return {"type": "FeatureCollection", "features": []}
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {"type": "FeatureCollection", "features": []}
         except (json.JSONDecodeError, UnicodeDecodeError):
+            raise LayerError(f"capa dañada: {self._path}")
+        except OSError:
             raise LayerError(f"capa dañada: {self._path}")
         if not isinstance(data, dict) or not isinstance(data.get("features"), list):
             raise LayerError(f"capa dañada: {self._path}")
@@ -357,17 +361,29 @@ class Layer:
             return copy.deepcopy(_DEFAULT_STATE)
         try:
             data = json.loads(self._state_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return copy.deepcopy(_DEFAULT_STATE)
         except (json.JSONDecodeError, UnicodeDecodeError):
+            raise LayerError(f"estado dañado: {self._state_path}")
+        except OSError:
             raise LayerError(f"estado dañado: {self._state_path}")
         if not isinstance(data, dict):
             raise LayerError(f"estado dañado: {self._state_path}")
         fresh = copy.deepcopy(_DEFAULT_STATE)
         fresh.update(data)
+        for key in ("authorized", "proposals", "announcements", "history"):
+            if not isinstance(fresh.get(key), list):
+                raise LayerError(f"estado dañado: {self._state_path}")
+        for key in ("next_id", "next_proposal", "next_announcement"):
+            value = fresh.get(key)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise LayerError(f"estado dañado: {self._state_path}")
         return fresh
 
     def _write(self, layer, state):
-        write_json_atomic(self._path, layer)
+        # Estado primero: un corte entre escrituras deja solo un hueco de id, no un j-N reutilizado.
         write_json_atomic(self._state_path, state)
+        write_json_atomic(self._path, layer)
 
     @staticmethod
     def _record(state, uid, action, fid, before):

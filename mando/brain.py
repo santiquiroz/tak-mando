@@ -1,11 +1,12 @@
 """LLM brain with map tools, short memory and time limits."""
 
 import json
+import threading
 import time
 import urllib.request
 
 from mando.grid import grid_ref
-from mando.tools import TOOLS
+from mando.tools import TOOLS, clean
 
 
 class LlmError(Exception):
@@ -128,17 +129,18 @@ class Brain:
         self.total_timeout_s = total_timeout_s
         self.clock = clock
         self._memory = {}
+        self._lock = threading.Lock()
 
-    def answer(self, actor, text, ctx, now):
+    def answer(self, actor, text, ctx, now, cancel=None):
         start = self.clock()
-        user_msg = {"role": "user", "content": f"{actor.callsign}: {text}"}
+        user_msg = {"role": "user", "content": f"{clean(actor.callsign, 40)}: {text}"}
         messages = [{"role": "system", "content": self.system_prompt}]
         messages.extend(self._memory_for(actor.uid, start))
         messages.append(user_msg)
         for _ in range(self.max_rounds):
             if self.clock() - start > self.total_timeout_s:
                 return "Se me acabó el tiempo pensando, prueba más corto."
-            done, reply_text = self._round(messages, actor, ctx)
+            done, reply_text = self._round(messages, actor, ctx, cancel)
             if done:
                 self._remember(actor.uid, user_msg, reply_text, self.clock())
                 return _clip(_plain(reply_text))
@@ -146,13 +148,13 @@ class Brain:
         self._remember(actor.uid, user_msg, reply_text, self.clock())
         return _clip(_plain(reply_text))
 
-    def _round(self, messages, actor, ctx):
+    def _round(self, messages, actor, ctx, cancel=None):
         reply = self.client.chat(messages, self.tools)
         calls = reply.get("tool_calls")
         if isinstance(calls, list) and calls:
             messages.append({"role": "assistant", "content": reply.get("content"),
                              "tool_calls": _clean_tool_calls(calls)})
-            for tool_msg in self._run_tools(calls, actor, ctx):
+            for tool_msg in self._run_tools(calls, actor, ctx, cancel):
                 messages.append(tool_msg)
             return False, ""
         content = reply.get("content")
@@ -160,10 +162,13 @@ class Brain:
             content = "Listo."
         return True, content
 
-    def _run_tools(self, calls, actor, ctx):
+    def _run_tools(self, calls, actor, ctx, cancel=None):
         out = []
         for item in calls:
             cid = item.get("id", "") if isinstance(item, dict) else ""
+            if cancel is not None and cancel.is_set():
+                out.append({"role": "tool", "tool_call_id": cid, "content": "Cancelado."})
+                continue
             fn = item.get("function", {}) if isinstance(item, dict) else {}
             if not isinstance(fn, dict):
                 fn = {}
@@ -177,24 +182,26 @@ class Brain:
         return out
 
     def _memory_for(self, uid, now_ts):
-        turns = self._memory.get(uid, [])
-        fresh = [t for t in turns if now_ts - t[0] <= self.memory_ttl_s]
-        if len(fresh) != len(turns):
-            self._memory[uid] = fresh
-        out = []
-        for _, user_msg, asst_msg in fresh:
-            out.append(dict(user_msg))
-            out.append(dict(asst_msg))
-        return out
+        with self._lock:
+            turns = self._memory.get(uid, [])
+            fresh = [t for t in turns if now_ts - t[0] <= self.memory_ttl_s]
+            if len(fresh) != len(turns):
+                self._memory[uid] = fresh
+            out = []
+            for _, user_msg, asst_msg in fresh:
+                out.append(dict(user_msg))
+                out.append(dict(asst_msg))
+            return out
 
     def _remember(self, uid, user_msg, reply_text, ts):
-        turns = [t for t in self._memory.get(uid, []) if ts - t[0] <= self.memory_ttl_s]
-        turns.append((ts, dict(user_msg), {"role": "assistant", "content": reply_text}))
-        if self.memory_turns <= 0:
-            turns = []
-        else:
-            turns = turns[-self.memory_turns:]
-        self._memory[uid] = turns
+        with self._lock:
+            turns = [t for t in self._memory.get(uid, []) if ts - t[0] <= self.memory_ttl_s]
+            turns.append((ts, dict(user_msg), {"role": "assistant", "content": reply_text}))
+            if self.memory_turns <= 0:
+                turns = []
+            else:
+                turns = turns[-self.memory_turns:]
+            self._memory[uid] = turns
 
 
 def build_system_prompt(event_name, grid, places, zones):

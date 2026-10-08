@@ -122,7 +122,7 @@ User=ots
 Restart=always
 RestartSec=15
 Environment=PYTHONUNBUFFERED=1
-EnvironmentFile=/home/ots/.config/tak-mando/llm.env
+EnvironmentFile=-/home/ots/.config/tak-mando/llm.env
 WorkingDirectory=/opt/tak-mando
 ExecStart=/usr/bin/python3 -m mando /etc/tak-mando/mando.zip --zones /etc/tak-mando/campo.geojson --layer /var/lib/tak-mando/juego.geojson --state /var/lib/tak-mando/mando-state.json --status /var/lib/tak-mando/mando-status.json --admin-uid ANDROID-xxxxxxxx --llm-url auto --event-name "OP MEDUSA"
 
@@ -174,7 +174,7 @@ Write to Mando by direct message. Examples:
 - `BRAVO es nuestro`
 - `en 20 min avisa que cierra el objetivo`
 
-In All Chat Rooms only messages that start with `Mando,` or `Mando:` reach the brain. `!` commands keep working with or without the brain.
+In All Chat Rooms only messages that start with `Mando,`, `Mando:` or `Mando ` reach the brain. `!` commands keep working with or without the brain.
 
 Permissions: authorized players write directly. Edits from anyone else become numbered proposals in the `Propuestas` folder, and each authorized player gets a direct message ending in `#N → responde ok N o no N`. Reply `ok N` or `no N` to accept or discard a proposal. `!autorizar <callsign>` and `!desautorizar <callsign>` grant and revoke access (authorized only). Initial authorized uids come from repeatable `--admin-uid`. Permission is checked in code from the sender uid, never by the model.
 

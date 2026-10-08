@@ -58,7 +58,7 @@ COMMAND_GAP_S = 3.0
 CHAT_MAX_AGE_S = 120.0
 DEFAULT_PASSWORD = "atakatak"
 
-_OK_RE = re.compile(r"^(ok|no)\s*#?(\d{1,4})$")
+_OK_RE = re.compile(r"^(ok|no)\s*#?(\d{1,4})$", re.IGNORECASE)
 
 _BACKOFFS = (5, 10, 20, 40, 60)
 

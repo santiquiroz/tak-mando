@@ -112,7 +112,12 @@ def clean(text, limit):
 
 
 def proposal_notice(p):
-    return f"{p['author']} propone: {p['summary']}. #{p['n']} → responde ok {p['n']} o no {p['n']}"
+    if not isinstance(p, dict):
+        p = {}
+    author = p.get("author", "?")
+    summary = p.get("summary", "?")
+    n = p.get("n", "?")
+    return f"{author} propone: {summary}. #{n} → responde ok {n} o no {n}"
 
 
 def execute(name, args, actor, ctx):

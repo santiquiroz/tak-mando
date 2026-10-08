@@ -189,3 +189,24 @@ def test_circle_closed_with_radius():
 
 def test_normalize():
     assert normalize("  Médico   NORTE ") == "medico norte"
+
+
+def test_damaged_state_types_raise_on_write(tmp_path):
+    (tmp_path / "state.json").write_text('{"history": null}', encoding="utf-8")
+    with pytest.raises(LayerError):
+        _layer(tmp_path).authorize("u1")
+
+
+def test_write_state_before_layer(tmp_path, monkeypatch):
+    import mando.layer as layer_mod
+    order = []
+    orig = layer_mod.write_json_atomic
+
+    def fake(path, data):
+        order.append(str(path))
+        return orig(path, data)
+
+    monkeypatch.setattr(layer_mod, "write_json_atomic", fake)
+    _add(_layer(tmp_path), "A")
+    assert order[0].endswith("state.json")
+    assert order[1].endswith("juego.geojson")

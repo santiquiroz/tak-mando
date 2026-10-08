@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from datetime import datetime, timedelta, timezone
 
 from mando import tools
@@ -15,6 +16,20 @@ BRAIN_TIMEOUT_S = 45.0
 STATUS_EVERY_S = 10.0
 
 _MANDO_RE = re.compile(r"(?i)^mando[,: ]")
+_DANADA = "La capa de juego está dañada; avisa a un organizador."
+_last_layer_error: str | None = None
+
+
+def _log(*parts) -> None:
+    print(datetime.now().strftime("%H:%M:%S"), *parts, flush=True)
+
+
+def _log_layer_error(exc: Exception) -> None:
+    global _last_layer_error
+    msg = str(exc)
+    if msg != _last_layer_error:
+        _last_layer_error = msg
+        _log(f"capa de juego dañada: {msg}")
 
 
 def _iso(when: datetime) -> str:
@@ -48,7 +63,13 @@ def authorize_reply(bot, name, args, sender, chat, requester, now):
         return bot._chat_reply(
             chat, sender, requester, "Este bot no tiene capa de juego.", now
         )
-    if sender not in bot.layer.authorized():
+    try:
+        allowed = bot.layer.authorized()
+    except (LayerError, OSError):
+        return bot._chat_reply(
+            chat, sender, requester, _DANADA, now,
+        )
+    if sender not in allowed:
         return bot._chat_reply(
             chat, sender, requester,
             "Solo un autorizado puede autorizar.", now,
@@ -65,10 +86,9 @@ def authorize_reply(bot, name, args, sender, chat, requester, now):
             bot.layer.authorize(found.uid)
         else:
             bot.layer.revoke(found.uid)
-    except LayerError:
+    except (LayerError, OSError):
         return bot._chat_reply(
-            chat, sender, requester,
-            "La capa de juego está dañada; avisa a un organizador.", now,
+            chat, sender, requester, _DANADA, now,
         )
     if name == "autorizar":
         bot.events.add(
@@ -89,7 +109,11 @@ def authorize_reply(bot, name, args, sender, chat, requester, now):
 def confirm_reply(bot, chat, sender, matched, now, sun):
     requester = bot.roster.get(sender)
     callsign = chat.get("sender_callsign") or sender
-    if sender not in bot.layer.authorized():
+    try:
+        allowed = bot.layer.authorized()
+    except (LayerError, OSError):
+        return bot._chat_reply(chat, sender, requester, _DANADA, now)
+    if sender not in allowed:
         return bot._chat_reply(
             chat, sender, requester,
             "Solo un autorizado puede confirmar propuestas.", now,
@@ -98,12 +122,15 @@ def confirm_reply(bot, chat, sender, matched, now, sun):
     tctx = tools.ToolContext(
         bot.layer, bot.events, bot._context(now, sun, requester)
     )
-    text = tools.execute(
-        "confirmar_propuesta",
-        {"numero": int(matched.group(2)),
-         "aceptar": matched.group(1) == "ok"},
-        actor, tctx,
-    )
+    try:
+        text = tools.execute(
+            "confirmar_propuesta",
+            {"numero": int(matched.group(2)),
+             "aceptar": matched.group(1).lower() == "ok"},
+            actor, tctx,
+        )
+    except (LayerError, OSError):
+        return bot._chat_reply(chat, sender, requester, _DANADA, now)
     return bot._chat_reply(chat, sender, requester, text, now)
 
 
@@ -112,17 +139,21 @@ def ask_brain(bot, sender, callsign, text, route, now, sun):
         return "Sigo con tu mensaje anterior."
     if _limited(bot, sender, now):
         return "Dame un respiro, prueba en un minuto."
-    if bot.layer is not None:
-        authorized = sender in bot.layer.authorized()
-    else:
-        authorized = False
+    try:
+        if bot.layer is not None:
+            authorized = sender in bot.layer.authorized()
+        else:
+            authorized = False
+    except (LayerError, OSError):
+        return _DANADA
     actor = tools.Actor(sender, callsign, authorized=authorized)
     requester = bot.roster.get(sender)
     tctx = tools.ToolContext(
         bot.layer, bot.events, bot._context(now, sun, requester)
     )
-    future = bot.executor.submit(bot.brain.answer, actor, text, tctx, now)
-    bot._pending[sender] = (future, route, now)
+    cancel = threading.Event()
+    future = bot.executor.submit(bot.brain.answer, actor, text, tctx, now, cancel)
+    bot._pending[sender] = (future, route, now, cancel)
     bot._last_ask[sender] = now
     bot._ask_times.setdefault(sender, []).append(now)
     bot._ask_all.append(now)
@@ -140,6 +171,8 @@ def brain_reply(bot, chat, sender, stripped, now, sun):
             return None
         route = ("all", None, None)
         body = stripped[matched.end():].strip(",: ")
+        if not body:
+            return None
     text = ask_brain(bot, sender, callsign, body, route, now, sun)
     if text is None:
         return None
@@ -148,7 +181,9 @@ def brain_reply(bot, chat, sender, stripped, now, sun):
 
 def drain(bot, now):
     out = []
-    for uid, (future, route, started) in list(bot._pending.items()):
+    for uid, entry in list(bot._pending.items()):
+        future, route, started = entry[0], entry[1], entry[2]
+        cancel = entry[3] if len(entry) > 3 else None
         if future.done():
             del bot._pending[uid]
             try:
@@ -158,6 +193,8 @@ def drain(bot, now):
             out.append(_route_event(bot, route, text, now))
         elif (now - started).total_seconds() > BRAIN_TIMEOUT_S:
             del bot._pending[uid]
+            if cancel is not None:
+                cancel.set()
             out.append(_route_event(
                 bot, route, "Sin cerebro ahora, usa !ayuda.", now
             ))
@@ -170,12 +207,18 @@ def due_announcements(bot, now):
         return out
     try:
         due = bot.layer.due_announcements(now)
-    except LayerError:
+    except (LayerError, OSError) as exc:
+        _log_layer_error(exc)
         return out
     for item in due:
-        text = item.get("text", "")
-        if item.get("audience", "todos") == "autorizados":
-            allowed = bot.layer.authorized()
+        text = item.get("text", "") if isinstance(item, dict) else ""
+        audience = item.get("audience", "todos") if isinstance(item, dict) else "todos"
+        if audience == "autorizados":
+            try:
+                allowed = bot.layer.authorized()
+            except (LayerError, OSError) as exc:
+                _log_layer_error(exc)
+                return out
             for player in bot.roster.players():
                 if player.uid in allowed:
                     out.append(dm_event(
@@ -194,17 +237,23 @@ def notify_proposals(bot, now):
     out = []
     if bot.layer is None:
         return out
-    allowed = bot.layer.authorized()
+    try:
+        allowed = bot.layer.authorized()
+        props = bot.layer.proposals()
+    except (LayerError, OSError) as exc:
+        _log_layer_error(exc)
+        return out
     targets = [p for p in bot.roster.players() if p.uid in allowed]
     if not targets:
         return out
-    for prop in bot.layer.proposals():
-        if prop.get("notified"):
+    for prop in props:
+        if not isinstance(prop, dict) or prop.get("notified"):
             continue
         text = tools.proposal_notice(prop)
         try:
-            bot.layer.mark_notified(prop["n"])
-        except LayerError:
+            bot.layer.mark_notified(prop.get("n"))
+        except (LayerError, OSError) as exc:
+            _log_layer_error(exc)
             continue
         for player in targets:
             out.append(dm_event(
@@ -236,7 +285,7 @@ def reload_hazards(bot):
                 message=props.get("description") or "",
             ))
         bot.geofence.set_zones(bot.base_zones + peligros)
-    except LayerError:
+    except (LayerError, OSError):
         return "corrupt"
     return "ok"
 
@@ -257,8 +306,12 @@ def write_status(bot, now):
             "lat": p.lat, "lon": p.lon,
             "last_seen": _iso(p.last_seen),
         })
-    _write_json_atomic(bot.status_path, {
-        "updated": _iso(now),
-        "players": players,
-        "events": bot.events.to_list(),
-    })
+    try:
+        _write_json_atomic(bot.status_path, {
+            "updated": _iso(now),
+            "players": players,
+            "events": bot.events.to_list(),
+        })
+    except (LayerError, OSError) as exc:
+        _log_layer_error(exc)
+        return

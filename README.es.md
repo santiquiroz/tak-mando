@@ -130,7 +130,7 @@ User=ots
 Restart=always
 RestartSec=15
 Environment=PYTHONUNBUFFERED=1
-EnvironmentFile=/home/ots/.config/tak-mando/llm.env
+EnvironmentFile=-/home/ots/.config/tak-mando/llm.env
 WorkingDirectory=/opt/tak-mando
 ExecStart=/usr/bin/python3 -m mando /etc/tak-mando/mando.zip --zones /etc/tak-mando/campo.geojson --layer /var/lib/tak-mando/juego.geojson --state /var/lib/tak-mando/mando-state.json --status /var/lib/tak-mando/mando-status.json --admin-uid ANDROID-xxxxxxxx --llm-url auto --event-name "OP MEDUSA"
 
@@ -183,7 +183,7 @@ Escríbele a Mando por mensaje directo. Ejemplos:
 - `BRAVO es nuestro`
 - `en 20 min avisa que cierra el objetivo`
 
-En All Chat Rooms solo los mensajes que empiezan con `Mando,` o `Mando:` llegan al cerebro. Los comandos `!` siguen funcionando con o sin cerebro.
+En All Chat Rooms solo los mensajes que empiezan con `Mando,`, `Mando:` o `Mando ` llegan al cerebro. Los comandos `!` siguen funcionando con o sin cerebro.
 
 Permisos: los autorizados escriben directamente. Las ediciones de los demás se vuelven propuestas numeradas en la carpeta `Propuestas`, y cada autorizado recibe un mensaje directo que termina en `#N → responde ok N o no N`. Responde `ok N` o `no N` para aceptar o descartar una propuesta. `!autorizar <callsign>` y `!desautorizar <callsign>` dan y quitan acceso (solo autorizados). Los uids autorizados iniciales vienen de `--admin-uid` (repetible). El permiso se revisa en el código según el uid del remitente, nunca por el modelo.
 

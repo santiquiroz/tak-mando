@@ -199,3 +199,30 @@ def test_empty_tool_calls_list_is_final_answer():
 def test_markdown_is_stripped_from_answers():
     brain, _ = _brain([say("Punto **EXFIL ALFA** en `E5`.\n- listo")])
     assert brain.answer(ADMIN, "?", None, NOW) == "Punto EXFIL ALFA en E5.\nlisto"
+
+
+def test_cancelled_tool_call_not_executed():
+    import threading
+    cancel = threading.Event()
+    cancel.set()
+    brain, executed = _brain([call("marcar_punto", {"nombre": "X"}), say("ok")])
+    assert brain.answer(ADMIN, "marca", None, NOW, cancel=cancel) == "ok"
+    assert executed == []
+    assert brain.client.calls[1][-1]["content"] == "Cancelado."
+
+
+def test_callsign_cleaned_in_user_message():
+    brain, _ = _brain([say("ok")])
+    nasty = "ab\ncd" + "x" * 100
+    actor = Actor("u9", nasty, authorized=False)
+    brain.answer(actor, "hola", None, NOW)
+    content = brain.client.calls[0][-1]["content"]
+    prefix, _, _ = content.partition(": ")
+    assert "\n" not in prefix
+    assert len(prefix) <= 40
+
+
+def test_memory_has_lock():
+    import threading
+    brain, _ = _brain([say("ok")])
+    assert isinstance(brain._lock, type(threading.Lock()))

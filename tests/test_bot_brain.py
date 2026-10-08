@@ -42,9 +42,11 @@ class ManualExecutor:
 class FakeBrain:
     def __init__(self, reply="respuesta", error=None):
         self.reply, self.error, self.calls = reply, error, []
+        self.cancels = []
 
-    def answer(self, actor, text, ctx, now):
+    def answer(self, actor, text, ctx, now, cancel=None):
         self.calls.append((actor.uid, actor.authorized, text))
+        self.cancels.append(cancel)
         if self.error:
             raise self.error
         return self.reply
@@ -192,3 +194,53 @@ def test_status_snapshot(tmp_path):
     data = json.loads((tmp_path / "status.json").read_text(encoding="utf-8"))
     assert {p["callsign"] for p in data["players"]} == {"santi", "Recon"}
     assert any(e["text"] == "Recon se conectó" for e in data["events"])
+
+
+@pytest.mark.parametrize("broken", ['{"history": null}', "{roto"])
+def test_damaged_state_never_crashes(tmp_path, broken):
+    brain = FakeBrain()
+    bot, _ = _bot(tmp_path, brain)
+    (tmp_path / "state.json").write_text(broken, encoding="utf-8")
+    later = NOW + timedelta(seconds=20)
+    bot.tick(later)
+    assert _texts(bot.handle_event(_chat("u-guest", "Recon", "hola", now=later), later)) == [
+        "La capa de juego está dañada; avisa a un organizador."]
+    assert _texts(bot.handle_event(_chat("u-guest", "Recon", "ok 1", now=later), later)) == [
+        "La capa de juego está dañada; avisa a un organizador."]
+    assert _texts(bot.handle_event(_chat("u-admin", "santi", "!autorizar recon", now=later), later)) == [
+        "La capa de juego está dañada; avisa a un organizador."]
+    out = bot.handle_event(_chat("u-guest", "Recon", "!cuadro", now=later), later)
+    assert out != [] and _texts(out) != []
+
+
+def test_ok_case_insensitive(tmp_path):
+    bot, layer = _bot(tmp_path, FakeBrain())
+    layer.add_proposal("anunciar", {"texto": "x"}, "Recon", "u-guest", NOW, "anunciar x")
+    assert "aceptada" in _texts(bot.handle_event(_chat("u-admin", "santi", "OK 1"), NOW))[0]
+    layer.add_proposal("anunciar", {"texto": "y"}, "Recon", "u-guest", NOW, "anunciar y")
+    later = NOW + timedelta(seconds=5)
+    assert "aceptada" in _texts(bot.handle_event(_chat("u-admin", "santi", "Ok 2", now=later), later))[0]
+    layer.add_proposal("anunciar", {"texto": "z"}, "Recon", "u-guest", NOW, "anunciar z")
+    later2 = NOW + timedelta(seconds=10)
+    assert "descartada" in _texts(bot.handle_event(_chat("u-admin", "santi", "NO 3", now=later2), later2))[0]
+
+
+def test_abandoned_worker_gets_cancel(tmp_path):
+    brain, ex = FakeBrain(), ManualExecutor()
+    bot, _ = _bot(tmp_path, brain, ex)
+    bot.handle_event(_chat("u-guest", "Recon", "hola"), NOW)
+    assert len(ex.jobs) == 1
+    late = NOW + timedelta(seconds=46)
+    assert "Sin cerebro ahora, usa !ayuda." in _texts(bot.tick(late))
+    ex.finish()
+    assert len(brain.cancels) == 1
+    assert brain.cancels[0] is not None and brain.cancels[0].is_set()
+
+
+def test_bare_mando_prefix_does_nothing(tmp_path):
+    brain = FakeBrain()
+    bot, _ = _bot(tmp_path, brain)
+    for text in ("Mando,", "Mando:", "Mando "):
+        out = bot.handle_event(_chat("u-guest", "Recon", text, room_id="All Chat Rooms"), NOW)
+        assert out == []
+    assert brain.calls == []
