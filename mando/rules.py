@@ -13,27 +13,32 @@ class GeofenceTracker:
         self._prev = {}
         self._last = {}
 
+    def set_zones(self, zones):
+        self._zones = list(zones)
+
     def check(self, player, now):
+        by_name = {}
         inside = set()
-        for idx, zone in enumerate(self._zones):
+        for zone in self._zones:
+            by_name.setdefault(zone.name, zone)
             try:
                 hit = point_in_ring(player.lat, player.lon, zone.ring)
             except (TypeError, IndexError):
                 hit = False
             if hit:
-                inside.add(idx)
+                inside.add(zone.name)
         prev = self._prev.get(player.uid, set())
         out = []
-        for idx in sorted(inside - prev):
-            last = self._last.get((player.uid, idx))
+        for name in sorted(inside - prev):
+            last = self._last.get((player.uid, name))
             if last is not None and (now - last).total_seconds() < self._cooldown:
                 continue
-            zone = self._zones[idx]
+            zone = by_name[name]
             if zone.message:
                 out.append(f"\u26a0 PELIGRO: {zone.name}. {zone.message}")
             else:
                 out.append(f"\u26a0 PELIGRO: {zone.name}.")
-            self._last[(player.uid, idx)] = now
+            self._last[(player.uid, name)] = now
         self._prev[player.uid] = inside
         return out
 

@@ -20,11 +20,13 @@ import tempfile
 import threading
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from mando import __version__
+from mando import __version__, brainbot, tools
+from mando.brain import Brain, LlmClient, build_system_prompt, gateway_url
 from mando.commands import Context, parse_command, run_command
 from mando.cot import (
     all_chat_event,
@@ -34,7 +36,9 @@ from mando.cot import (
     parse_event,
     split_stream,
 )
+from mando.events import EventLog
 from mando.grid import grid_ref
+from mando.layer import Layer
 from mando.roster import Roster
 from mando.rules import (
     Announcer,
@@ -53,6 +57,8 @@ ANNOUNCE_EVERY_S = 60.0
 COMMAND_GAP_S = 3.0
 CHAT_MAX_AGE_S = 120.0
 DEFAULT_PASSWORD = "atakatak"
+
+_OK_RE = re.compile(r"^(ok|no)\s*#?(\d{1,4})$")
 
 _BACKOFFS = (5, 10, 20, 40, 60)
 
@@ -305,6 +311,12 @@ class Bot:
         package=None,
         sent_state=None,
         grid=None,
+        layer=None,
+        brain=None,
+        executor=None,
+        admin_uids=(),
+        status_path=None,
+        events=None,
     ):
         self.uid = uid
         self.callsign = callsign
@@ -335,6 +347,21 @@ class Bot:
         self.package = package
         self.sent_state = sent_state
         self.grid = grid
+        self.layer = layer
+        self.brain = brain
+        self.executor = executor
+        self.status_path = status_path
+        self.base_zones = list(zones)
+        self.events = events or EventLog()
+        if self.layer is not None:
+            for admin in admin_uids:
+                self.layer.authorize(admin)
+        self._layer_mtime = None
+        self._pending = {}
+        self._last_ask = {}
+        self._ask_times = {}
+        self._ask_all = []
+        self._last_status = None
         self._sent: dict = (
             _load_sent_state(sent_state) if sent_state is not None else {}
         )
@@ -381,7 +408,12 @@ class Bot:
         out: list[str] = []
         sun = self._sun_for(now)
         player = None
+        seen_before = True
         if isinstance(event, dict):
+            uid = event.get("uid")
+            seen_before = (
+                not isinstance(uid, str) or self.roster.get(uid) is not None
+            )
             try:
                 player = self.roster.update(event, now)
             except Exception:
@@ -389,12 +421,19 @@ class Bot:
             contact = self.roster.contact(event, now) if self.package is not None else None
             if contact is not None:
                 out.extend(self._package_once(contact[0], contact[1], now))
+            if player is not None and not seen_before:
+                self.events.add(
+                    "conexion", f"{player.callsign} se conectó", now
+                )
             if player is not None:
                 for msg in self.geofence.check(player, now):
                     out.append(dm_event(
                         self.uid, self.callsign, player.uid,
                         player.callsign, msg, now,
                     ))
+                    self.events.add(
+                        "peligro", f"{player.callsign}: {msg}", now
+                    )
             chat = event.get("chat")
             if chat:
                 reply = self._command_reply(chat, event, now, sun)
@@ -437,19 +476,24 @@ class Bot:
                 stamp = stamp.replace(tzinfo=timezone.utc)
             if (now - stamp).total_seconds() > CHAT_MAX_AGE_S:
                 return None
-        parsed = parse_command(chat.get("text") or "")
-        if parsed is None:
-            return None
-        name, args = parsed
-        last = self.last_cmd.get(sender)
-        if last is not None and (now - last).total_seconds() < COMMAND_GAP_S:
-            return None
-        self.last_cmd[sender] = now
-        requester = self.roster.get(sender)
-        if name == "mapas" and self.package is not None:
-            return self._mapas_reply(sender, requester, chat, now)
+        text = chat.get("text") or ""
+        parsed = parse_command(text)
+        if parsed is not None:
+            return self._bang_reply(chat, parsed, sender, now, sun)
+        stripped = text.strip()
+        if self.layer is not None:
+            matched = _OK_RE.match(stripped)
+            if matched is not None:
+                return brainbot.confirm_reply(
+                    self, chat, sender, matched, now, sun
+                )
+        if self.brain is not None and self.executor is not None:
+            return brainbot.brain_reply(self, chat, sender, stripped, now, sun)
+        return None
+
+    def _context(self, now: datetime, sun: dict, requester) -> Context:
         hours, forecast_age = self._forecast(now)
-        ctx = Context(
+        return Context(
             now_utc=now,
             utc_offset_h=self.utc_offset_h,
             requester=requester,
@@ -462,7 +506,10 @@ class Bot:
             forecast_age_s=forecast_age,
             grid=self.grid,
         )
-        text = run_command(name, args, ctx)
+
+    def _chat_reply(
+        self, chat: dict, sender: str, requester, text: str, now: datetime
+    ) -> str:
         if (chat.get("room_id") or "") == self.uid:
             to_callsign = (
                 requester.callsign if requester is not None
@@ -472,6 +519,24 @@ class Bot:
                 self.uid, self.callsign, sender, to_callsign, text, now
             )
         return all_chat_event(self.uid, self.callsign, text, now)
+
+    def _bang_reply(
+        self, chat: dict, parsed: tuple, sender: str, now: datetime, sun: dict
+    ) -> str | list[str] | None:
+        name, args = parsed
+        last = self.last_cmd.get(sender)
+        if last is not None and (now - last).total_seconds() < COMMAND_GAP_S:
+            return None
+        self.last_cmd[sender] = now
+        requester = self.roster.get(sender)
+        if name in ("autorizar", "desautorizar"):
+            return brainbot.authorize_reply(
+                self, name, args, sender, chat, requester, now
+            )
+        if name == "mapas" and self.package is not None:
+            return self._mapas_reply(sender, requester, chat, now)
+        text = run_command(name, args, self._context(now, sun, requester))
+        return self._chat_reply(chat, sender, requester, text, now)
 
     def _mapas_reply(
         self, sender: str, requester, chat: dict, now: datetime
@@ -534,6 +599,12 @@ class Bot:
                     f"Última posición: {where}.",
                     now,
                 ))
+                self.events.add(
+                    "contacto_perdido",
+                    f"{player.callsign} lleva {mins} min sin reportar "
+                    f"(última: {where})",
+                    now,
+                )
         if self.announce and (
             self._last_announce is None
             or (now - self._last_announce).total_seconds()
@@ -549,6 +620,12 @@ class Bot:
             msg = self.rain.check(hours, now, self.utc_offset_h)
             if msg is not None:
                 out.append(all_chat_event(self.uid, self.callsign, msg, now))
+        out.extend(brainbot.drain(self, now))
+        out.extend(brainbot.due_announcements(self, now))
+        out.extend(brainbot.notify_proposals(self, now))
+        if brainbot.reload_hazards(self) == "corrupt":
+            _log("capa de juego dañada, conservo los peligros anteriores")
+        brainbot.write_status(self, now)
         return out
 
 
@@ -705,6 +782,38 @@ def run(args) -> int:
             threading.Thread(
                 target=_weather, daemon=True, name="tak-weather"
             ).start()
+        layer = None
+        if getattr(args, "layer", None):
+            state_arg = getattr(args, "state", None) or args.layer + ".state.json"
+            layer = Layer(Path(args.layer), Path(state_arg))
+        brain = None
+        executor = None
+        if getattr(args, "llm_url", None):
+            url = args.llm_url
+            if url == "auto":
+                try:
+                    route_text = Path("/proc/net/route").read_text(encoding="utf-8")
+                except OSError:
+                    raise ValueError(
+                        "no encuentro la puerta de enlace de WSL"
+                    ) from None
+                url = gateway_url(route_text)
+                if url is None:
+                    raise ValueError("no encuentro la puerta de enlace de WSL")
+            api_key = os.environ.get("MANDO_LLM_KEY")
+            if not api_key:
+                raise ValueError("falta MANDO_LLM_KEY")
+            model = getattr(args, "llm_model", None) or "claude-sonnet-4-6"
+            event_name = getattr(args, "event_name", None) or "la partida"
+            prompt = build_system_prompt(
+                event_name, getattr(args, "grid", None), places, zones
+            )
+            brain = Brain(LlmClient(url, api_key, model), tools.execute, prompt)
+            executor = ThreadPoolExecutor(
+                max_workers=2, thread_name_prefix="mando-brain"
+            )
+            _log(f"cerebro: {url} modelo {model}")
+        status_arg = getattr(args, "status", None)
         bot = Bot(
             uid=args.uid,
             callsign=args.callsign,
@@ -722,6 +831,11 @@ def run(args) -> int:
             package=package,
             sent_state=sent_state,
             grid=getattr(args, "grid", None),
+            layer=layer,
+            brain=brain,
+            executor=executor,
+            admin_uids=tuple(getattr(args, "admin_uid", None) or ()),
+            status_path=Path(status_arg) if status_arg else None,
         )
         _log(
             f"zonas: {len(zones)} peligros, {len(places)} lugares "

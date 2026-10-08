@@ -30,6 +30,8 @@ _ALIASES = {
     "grid": "cuadro",
     "cuadricula": "cuadro",
     "yo": "cuadro",
+    "autorizar": "autorizar",
+    "desautorizar": "desautorizar",
 }
 
 _AYUDA = (

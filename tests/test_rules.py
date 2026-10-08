@@ -141,3 +141,18 @@ def test_rainwatch_silent_below_threshold():
         _hour(datetime(2026, 10, 10, 22, 0, tzinfo=timezone.utc), 2.0),
     ]
     assert watch.check(exact, now, -5) is not None
+
+
+def test_geofence_set_zones_keeps_state_by_name():
+    from mando.rules import GeofenceTracker
+    from mando.zones import Zone
+    from mando.roster import Player
+    from datetime import datetime, timezone
+    now = datetime(2026, 10, 10, 22, 0, tzinfo=timezone.utc)
+    ring = [[0.0, 0.0], [0.01, 0.0], [0.01, 0.01], [0.0, 0.01], [0.0, 0.0]]
+    other = [[1.0, 1.0], [1.01, 1.0], [1.01, 1.01], [1.0, 1.01], [1.0, 1.0]]
+    tracker = GeofenceTracker([Zone("A", ring, "")])
+    inside = Player("u1", "x", 0.005, 0.005, now, None)
+    assert tracker.check(inside, now) == ["⚠ PELIGRO: A."]
+    tracker.set_zones([Zone("B", other, ""), Zone("A", ring, "")])
+    assert tracker.check(inside, now) == []

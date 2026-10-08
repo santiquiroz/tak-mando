@@ -60,6 +60,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--grid", default=None,
                         help="cuadrícula GRG NORTH,WEST,CELL_M,COLS,ROWS "
                         "(p. ej. 5.1650,-75.4960,100,9,9)")
+    parser.add_argument("--layer", default=None,
+                        help="GeoJSON de la capa de juego (juego.geojson)")
+    parser.add_argument("--state", default=None,
+                        help="JSON de estado del juego "
+                        "(por defecto, <layer>.state.json)")
+    parser.add_argument("--status", default=None,
+                        help="JSON de estado para lectores "
+                        "(mando-status.json)")
+    parser.add_argument("--admin-uid", action="append", default=None,
+                        help="uid autorizado inicial (repetible)")
+    parser.add_argument("--llm-url", default=None,
+                        help="base OpenAI-compatible del cerebro o 'auto' "
+                        "(puerta de enlace de WSL)")
+    parser.add_argument("--llm-model", default="claude-sonnet-4-6",
+                        help="modelo del cerebro")
+    parser.add_argument("--event-name", default="la partida",
+                        help="nombre de la partida para el cerebro")
     return parser
 
 
