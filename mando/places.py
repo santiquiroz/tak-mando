@@ -89,6 +89,8 @@ def _building_number(norm: str, places: list[Place]) -> Resolved | None:
 def _place_name(norm: str, places: list[Place]) -> Resolved | str | None:
     if norm == "":
         return None
+    if _NUMBER_RE.match(norm):
+        return None
     matches = []
     for place in places or []:
         full = normalize(place.name)

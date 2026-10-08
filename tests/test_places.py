@@ -70,3 +70,7 @@ def test_outside_field():
 def test_unknown_and_empty():
     assert _resolve("xyz").startswith("No encuentro 'xyz'")
     assert _resolve("  ").startswith("Dime un lugar")
+
+
+def test_unknown_building_number_is_not_a_name_match():
+    assert _resolve("1").startswith("No encuentro '1'")
