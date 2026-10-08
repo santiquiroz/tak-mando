@@ -74,3 +74,25 @@ def test_unknown_and_empty():
 
 def test_unknown_building_number_is_not_a_name_match():
     assert _resolve("1").startswith("No encuentro '1'")
+
+
+def test_duplicate_building_name_resolves_to_first():
+    dup = [
+        Place("12 Torre sur", 5.1594, -75.4934, None),
+        Place("12 Torre sur", 5.1600, -75.4940, None),
+    ]
+    r = resolve_place("torre sur", grid=GRID, places=dup, players=[RECON, ME], requester=ME)
+    assert isinstance(r, Resolved)
+    assert r.label == "12 Torre sur"
+    assert (r.lat, r.lon) == (5.1594, -75.4934)
+
+
+def test_different_names_stay_ambiguous():
+    places = [
+        Place("12 Torre sur", 5.1594, -75.4934, None),
+        Place("11 Torre oeste", 5.1600, -75.4940, None),
+    ]
+    assert (
+        resolve_place("torre", grid=GRID, places=places, players=[RECON, ME], requester=ME)
+        == "Hay varios lugares: 12 Torre sur, 11 Torre oeste. ¿Cuál?"
+    )

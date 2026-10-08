@@ -92,11 +92,14 @@ def _place_name(norm: str, places: list[Place]) -> Resolved | str | None:
     if _NUMBER_RE.match(norm):
         return None
     matches = []
+    seen = set()
     for place in places or []:
         full = normalize(place.name)
         stripped = _LEADING_NUM_RE.sub("", full).strip()
         if norm == full or norm in stripped:
-            matches.append(place)
+            if full not in seen:
+                seen.add(full)
+                matches.append(place)
     if len(matches) > 1:
         names = ", ".join(p.name for p in matches)
         return f"Hay varios lugares: {names}. ¿Cuál?"
