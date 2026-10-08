@@ -176,6 +176,7 @@ def test_system_prompt_has_grid_buildings_hazards():
     assert "columnas A-I" in prompt and "filas 1-9" in prompt
     assert "12 Torre sur (" in prompt and "Llegada" not in prompt
     assert "1 Tanque grande" in prompt
+    assert "sin markdown" in prompt
     assert len(prompt) < 4000
 
 
@@ -193,3 +194,8 @@ def test_empty_tool_calls_list_is_final_answer():
     brain, executed = _brain([{"role": "assistant", "content": "listo ya", "tool_calls": [], "reasoning_content": "x"}])
     assert brain.answer(ADMIN, "?", None, NOW) == "listo ya"
     assert executed == []
+
+
+def test_markdown_is_stripped_from_answers():
+    brain, _ = _brain([say("Punto **EXFIL ALFA** en `E5`.\n- listo")])
+    assert brain.answer(ADMIN, "?", None, NOW) == "Punto EXFIL ALFA en E5.\nlisto"

@@ -298,14 +298,15 @@ def _que_hay_en(args, actor, ctx):
 
 
 def _near_places(cc, found, ref):
-    out = []
+    best = {}
     for place in cc.places or []:
         dist = haversine_m(found.lat, found.lon, place.lat, place.lon)
         same = ref is not None and cc.grid is not None
         same = same and grid_ref(cc.grid, place.lat, place.lon) == ref
         if dist <= 60 or same:
-            out.append(f"{place.name} ({dist:.0f} m)")
-    return out
+            if place.name not in best or dist < best[place.name]:
+                best[place.name] = dist
+    return [f"{name} ({best[name]:.0f} m)" for name in best]
 
 
 def _near_game(ctx, found):

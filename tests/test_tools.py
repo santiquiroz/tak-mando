@@ -151,6 +151,12 @@ def test_what_is_here_lists_buildings_hazards_and_layer(ctx):
     assert "1 Tanque grande" in out and "Peligro: 1 Tanque grande" in out and "j-1 MED" in out
 
 
+def test_what_is_here_does_not_repeat_places(ctx):
+    ctx.command_context.places.append(Place("1 Tanque grande", 5.1615, -75.49115, None))
+    out = execute("que_hay_en", {"lugar": "1"}, ADMIN, ctx)
+    assert out.count("1 Tanque grande (") == 1
+
+
 def test_sitrep_and_layer_listing(ctx):
     assert execute("sitrep", {}, ADMIN, ctx) == "Sin novedades en los últimos 10 min."
     execute("marcar_punto", {"nombre": "A", "lugar": "E5", "tipo": "info"}, ADMIN, ctx)
