@@ -158,3 +158,15 @@ CLI: `python -m mando PACKAGE.zip --zones FIELD.geojson [--host H] [--port P] [-
 - **Dry run**: connect and listen, but print outgoing chat events instead of sending them (identity is still sent so the bot is visible).
 - **Logging**: one line per action to stdout with `flush=True` (`HH:MM:SS dm Recon: ⚠ PELIGRO …`, `HH:MM:SS cmd thomas !luz`). Never log certificate material.
 - Ctrl+C exits 0 and removes the temporary directory.
+
+## Brain, game layer and MCP
+
+Full spec: [docs/superpowers/specs/2026-10-08-mando-cerebro-design.md](superpowers/specs/2026-10-08-mando-cerebro-design.md).
+
+- `mando/layer.py`: game layer GeoJSON plus state, under a file lock with atomic writes.
+- `mando/places.py`: resolves a place word (grid square, building, callsign, `aquí`, `lat,lon`) to coordinates.
+- `mando/events.py`: short in-memory event log used for SITREP.
+- `mando/tools.py`: read and write tools with uid permission checks and proposals.
+- `mando/brain.py`: LLM client, tool loop and per-player memory.
+- `mando/brainbot.py`: chat routing to the brain, rate limits, proposal notices and status snapshots.
+- `mando/mcp.py`: stdio JSON-RPC server exposing the same tools, always authorized.

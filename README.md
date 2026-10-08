@@ -122,8 +122,9 @@ User=ots
 Restart=always
 RestartSec=15
 Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/ots/.config/tak-mando/llm.env
 WorkingDirectory=/opt/tak-mando
-ExecStart=/usr/bin/python3 -m mando /etc/tak-mando/mando.zip --zones /etc/tak-mando/campo.geojson
+ExecStart=/usr/bin/python3 -m mando /etc/tak-mando/mando.zip --zones /etc/tak-mando/campo.geojson --layer /var/lib/tak-mando/juego.geojson --state /var/lib/tak-mando/mando-state.json --status /var/lib/tak-mando/mando-status.json --admin-uid ANDROID-xxxxxxxx --llm-url auto --event-name "OP MEDUSA"
 
 [Install]
 WantedBy=multi-user.target
@@ -135,6 +136,13 @@ Install it with:
 sudo cp deploy/tak-mando.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now tak-mando
+```
+
+The brain needs an API key. Keep it in the file named by `EnvironmentFile`, with `MANDO_LLM_KEY=...` inside and mode 600:
+
+```sh
+printf 'MANDO_LLM_KEY=...\n' > /home/ots/.config/tak-mando/llm.env
+chmod 600 /home/ots/.config/tak-mando/llm.env
 ```
 
 ## Chat commands
@@ -153,6 +161,50 @@ sudo systemctl enable --now tak-mando
 Commands work in All Chat Rooms and by direct message to the bot; the bot
 answers in the same room. At most one command per sender every 3 seconds.
 
+## AI brain and game layer
+
+With `--llm-url` set, Mando also understands plain language and edits a shared game layer. Without it, the bot behaves exactly as before.
+
+Write to Mando by direct message. Examples:
+
+- `marca un punto de reunión EXFIL ALFA en E5`
+- `¿qué hay en D6?`
+- `¿dónde está Recon?`
+- `sitrep`
+- `BRAVO es nuestro`
+- `en 20 min avisa que cierra el objetivo`
+
+In All Chat Rooms only messages that start with `Mando,` or `Mando:` reach the brain. `!` commands keep working with or without the brain.
+
+Permissions: authorized players write directly. Edits from anyone else become numbered proposals in the `Propuestas` folder, and each authorized player gets a direct message ending in `#N → responde ok N o no N`. Reply `ok N` or `no N` to accept or discard a proposal. `!autorizar <callsign>` and `!desautorizar <callsign>` grant and revoke access (authorized only). Initial authorized uids come from repeatable `--admin-uid`. Permission is checked in code from the sender uid, never by the model.
+
+Files: `--layer` is the game layer GeoJSON. Folder `Juego` holds the shared objects. Folder `Propuestas` holds pending proposals. Object ids look like `j-N`. `--state` holds authorized uids, proposals, scheduled announcements and the history behind `deshacer`. `--status` is a read-only snapshot written every 10 s. An overlay service publishes the layer to TAK by reading GeoJSON files (for example tak-overlay.py from the Blindside project, which accepts several files and republishes within about 2 s of a change).
+
+Setup:
+
+```sh
+python -m mando mando.zip --zones campo.geojson --grid 5.1650,-75.4960,100,9,9 \
+  --layer juego.geojson --state mando-state.json --status mando-status.json \
+  --admin-uid ANDROID-xxxxxxxx --llm-url auto --llm-model claude-sonnet-4-6 \
+  --event-name "OP MEDUSA"
+```
+
+`--llm-model` defaults to `claude-sonnet-4-6`. The API key comes from the environment variable `MANDO_LLM_KEY` (never logged). Any OpenAI-compatible `/chat/completions` endpoint with tool calling works (bipolar-code, OpenAI, a local llama.cpp or Ollama server with tools). `--llm-url auto` means `http://<default gateway>:8000/v1`, which is the Windows host when the bot runs in WSL2. The examples assume the OP MEDUSA field on a 9x9 grid of 100 m squares (columns A-I west to east, rows 1-9 north to south).
+
+Limits: 4 s between messages, 40 per hour per player, 300 per hour in total, 5 map edits per message, 45 s per answer. On any failure Mando answers `Sin cerebro ahora, usa !ayuda.`
+
+MCP: the same tools over stdio JSON-RPC, always authorized:
+
+```sh
+python -m mando.mcp --layer juego.geojson --state mando-state.json --status mando-status.json --zones campo.geojson --grid 5.1650,-75.4960,100,9,9
+```
+
+Claude Code example:
+
+```sh
+claude mcp add --scope user mando -- wsl.exe -d Ubuntu-24.04 -u ots --cd /path/to/tak-mando -- python3 -m mando.mcp --layer juego.geojson --state mando-state.json --status mando-status.json --zones campo.geojson --grid 5.1650,-75.4960,100,9,9
+```
+
 ## Security notes
 
 - The bot only reads what the team already shares on the TAK server; it
@@ -165,6 +217,11 @@ answers in the same room. At most one command per sender every 3 seconds.
   list. Certificates live in a private temporary directory (mode 0700)
   that is deleted on exit, and are never logged.
 - No shell, no eval: subprocess calls use argument lists only.
+- The model can only do what the tools allow, and every write is
+  permission-checked by uid in code.
+- Text from other players never reaches the model, except callsigns and
+  object names, cleaned and cut.
+- Keep the LLM endpoint off the LAN and the internet.
 
 ## License
 
