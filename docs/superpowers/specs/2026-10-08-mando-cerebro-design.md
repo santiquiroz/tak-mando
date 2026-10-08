@@ -145,7 +145,8 @@ Permisos (los revisa el código según `actor`, nunca el modelo):
 - Límite por jugador: una consulta en curso a la vez, 4 s mínimo entre mensajes y máx. 40 por hora. Global: máx. 300 por hora. Al pasarse: `"Dame un respiro, prueba en un minuto."`.
 - Si falla el cerebro (`LlmError`, timeout total de 45 s o sin configurar): `"Sin cerebro ahora, usa !ayuda."`.
 - La geocerca suma las zonas `peligro` de la capa de juego: recarga `juego.geojson` cuando cambia su mtime (comprobado en `tick`).
-- `tick` también publica los avisos programados vencidos, avisa a los autorizados de propuestas nuevas que haya creado el MCP y escribe `mando-status.json` cada 10 s.
+- `tick` también publica los avisos programados vencidos (los anuncios inmediatos, de cualquier origen, pasan por la misma cola con hora "ahora"), avisa a los autorizados de las propuestas todavía no notificadas y escribe `mando-status.json` cada 10 s.
+- `GeofenceTracker` pasa a identificar zonas por nombre (no por posición en la lista) y gana `set_zones(zones)`, así recargar los peligros no confunde el estado de quién estaba dentro.
 - Opciones nuevas en `__main__.py`: `--layer PATH`, `--state PATH`, `--status PATH`, `--admin-uid UID` (repetible), `--llm-url URL|auto`, `--llm-model NAME` (por defecto `claude-sonnet-4-6`, el alias que bipolar enruta al proveedor activo). `--llm-url auto` usa `http://<puerta de enlace por defecto>:8000/v1`, leída de `/proc/net/route` (la IP de Windows vista desde WSL cambia al reiniciar). La clave sale de la variable de entorno `MANDO_LLM_KEY`. Sin `--llm-url`, el cerebro queda apagado y el bot se comporta como hoy.
 
 ### 5.7 `mando/mcp.py`: servidor MCP
