@@ -3,7 +3,7 @@
 tak-mando is a companion bot for a TAK server (OpenTAKServer, FreeTAKServer, TAK Server). It connects as one more client with its own certificate, listens to everything the team shares and adds what a server alone cannot:
 
 - **Geofence safety alerts**: a direct chat message to a player the moment they enter a hazard polygon (a flooded tank, a cliff edge).
-- **Chat commands**: players type `!luz`, `!clima`, `!equipo`, `!donde <callsign>`, `!peligros`, `!mapas` in ATAK/iTAK chat and get an answer.
+- **Chat commands**: players type `!luz`, `!clima`, `!equipo`, `!donde <callsign>`, `!peligros`, `!mapas`, `!cuadro` in ATAK/iTAK chat and get an answer.
 - **Field package**: the bot hands the field data package to every player (once each, plus `!mapas` on demand), so nobody passes zip files around.
 - **Announcements**: sunset, last light and darkness, and heavy rain in the next hours, sent to the whole team.
 - **Lost contact**: a team message when a player who was active stops reporting.
@@ -95,6 +95,15 @@ The same GeoJSON used for the map overlay (simplestyle properties, `folder` prop
 - `nearest_place(places, lat, lon) -> tuple[Place, float] | None`: if the point is inside one or more polygons, the smallest one (by bounding-box area) at distance 0; otherwise the place with the smallest distance (polygon edge distance, or point distance).
 - `describe_location(places, lat, lon) -> str`: `"en Bloque central"` when inside, `"a 40 m de Silo 2"` when nearer than 150 m, otherwise `""`.
 
+## mando/grid.py - grid references
+
+A square GRG laid over the field for voice calls like "E5": columns lettered A, B, C… west to east, rows numbered 1, 2, 3… north to south. `--grid NORTH,WEST,CELL_M,COLS,ROWS` (e.g. `5.1650,-75.4960,100,9,9`) sets the north-west corner, the square cell size in metres and the grid extent.
+
+- `Grid` dataclass: `north`, `west`, `cell_m`, `cols`, `rows`.
+- `cell_deg(grid) -> tuple[float, float]`: `(dlat, dlon)` of one cell. `dlat = cell_m / 110574.0`; `dlon = cell_m / (111320.0 * cos(radians(ref_lat)))` with `ref_lat = north - rows * dlat / 2` (the grid centre).
+- `grid_ref(grid, lat, lon) -> str | None`: `col = floor((lon - west) / dlon)`, `row = floor((north - lat) / dlat)`; None when outside `0 <= col < cols` and `0 <= row < rows`; else `f"{chr(65 + col)}{row + 1}"`.
+- `parse_grid(text) -> Grid`: `"NORTH,WEST,CELL_M,COLS,ROWS"`; `ValueError` with a Spanish message when malformed (wrong count, not numbers, `cols` outside 1..26, `rows < 1`, `cell_m <= 0`).
+
 ## mando/roster.py - who is where
 
 - `Player` dataclass: `uid, callsign, lat, lon, last_seen` (aware UTC), `stale` (aware or None).
@@ -118,21 +127,22 @@ The same GeoJSON used for the map overlay (simplestyle properties, `folder` prop
 
 ## mando/commands.py - chat commands
 
-- `parse_command(text) -> tuple[str, str] | None`: None unless the stripped text starts with `!`. Returns `(name, args)` with the name lower-cased and accents removed, mapped through aliases: `ayuda|help|h → ayuda`, `luz|sol → luz`, `clima|tiempo → clima`, `equipo|team → equipo`, `donde|ubicar → donde`, `peligros|peligro → peligros`, `mapas|mapa|paquete → mapas`; anything else → `desconocido`. `args` is the rest, stripped, max 40 characters.
-- `Context` dataclass: `now_utc, utc_offset_h, requester` (Player or None), `players` (list), `places`, `zones`, `sun` (sun_events dict for today), `moon` (float), `hours` (forecast list), `forecast_age_s` (float or None).
+- `parse_command(text) -> tuple[str, str] | None`: None unless the stripped text starts with `!`. Returns `(name, args)` with the name lower-cased and accents removed, mapped through aliases: `ayuda|help|h → ayuda`, `luz|sol → luz`, `clima|tiempo → clima`, `equipo|team → equipo`, `donde|ubicar → donde`, `peligros|peligro → peligros`, `mapas|mapa|paquete → mapas`, `cuadro|grid|cuadricula|yo → cuadro`; anything else → `desconocido`. `args` is the rest, stripped, max 40 characters.
+- `Context` dataclass: `now_utc, utc_offset_h, requester` (Player or None), `players` (list), `places`, `zones`, `sun` (sun_events dict for today), `moon` (float), `hours` (forecast list), `forecast_age_s` (float or None), `grid` (Grid or None, default None).
 - `run_command(name, args, ctx) -> str` (reply at most 700 characters; cut with `…`):
-  - `ayuda`: `"Comandos: !luz (sol y oscuridad) · !clima (próximas 3 h) · !equipo (dónde está cada uno) · !donde <callsign> · !peligros (cerca de ti) · !mapas (paquete de mapas)"`.
+  - `ayuda`: `"Comandos: !luz (sol y oscuridad) · !clima (próximas 3 h) · !equipo (dónde está cada uno) · !donde <callsign> · !peligros (cerca de ti) · !mapas (paquete de mapas) · !cuadro (tu cuadro del mapa)"`.
   - `mapas`: `"Este servidor no tiene paquete de mapas configurado."` (this is what `run_command` returns; when `--share-package` is set the bot instead sends the fileshare to the requester plus `"Paquete enviado: {name}. Acéptalo en la notificación."`).
   - `luz`: before sunset `"Sol se pone {HH:MM} (en {Xh Ym}). Oscuridad total {HH:MM}. Luna {N} %."`; after nautical dusk and before sunrise `"Es de noche. Amanece {HH:MM} (en {…}). Luna {N} %."`; between sunset and nautical dusk `"Crepúsculo. Oscuridad total {HH:MM} (en {…})."`. Durations like `"1 h 12 min"` or `"8 min"`.
   - `clima`: next 3 hours as `"{HH:MM} {t:.0f}°C lluvia {p}% {mm:.1f} mm"` joined by `" · "`; append ` (pronóstico de hace {N} min)` when `forecast_age_s` is known; `"Sin pronóstico: el servidor no pudo consultarlo."` when empty.
-  - `equipo`: other players (not the requester), at most 10, each `"{callsign} {describe_offset from requester} (hace {age})"`; without a requester position just `"{callsign} (hace {age})"`. Age: `"12 s"`, `"3 min"`, `"1 h"`. Empty: `"No hay nadie más reportando posición."`.
-  - `donde`: no args → `"Uso: !donde <callsign>"`; not found → `"No encuentro a '{args}'. Conectados: {callsigns}"`; found → `"{callsign}: {describe_offset from requester}{, cerca/en place} (hace {age})"` (skip the offset when the requester position is unknown).
+  - `equipo`: other players (not the requester), at most 10, each `"{callsign} {describe_offset from requester} (hace {age})"`; without a requester position just `"{callsign} (hace {age})"`; append `" [{ref}]"` when the grid ref of that player is not None. Age: `"12 s"`, `"3 min"`, `"1 h"`. Empty: `"No hay nadie más reportando posición."`.
+  - `donde`: no args → `"Uso: !donde <callsign>"`; not found → `"No encuentro a '{args}'. Conectados: {callsigns}"`; found → `"{callsign}: {describe_offset from requester}{, en ref}{, cerca/en place} (hace {age})"` (skip the offset when the requester position is unknown; skip `, en ref` when the grid is None or the ref is None; skip the place when empty).
   - `peligros`: zones within 200 m of the requester sorted by `distance_to_ring_m`, `"{name} a {describe_offset to centroid}"` joined by `" · "` (inside: `"{name}: ESTÁS DENTRO"`); none: `"Ningún peligro marcado a menos de 200 m."`; unknown requester position: `"No tengo tu posición todavía."`.
+  - `cuadro`: the requester's own GRG square. Unknown position → `"No tengo tu posición todavía."`; else `"Estás en {ref}, {describe_location}."` omitting the `en {ref}` part when None and the place part when empty; when both are missing `"Estás en {lat:.5f},{lon:.5f}."`.
   - `desconocido`: `"No conozco ese comando. Escribe !ayuda."`.
 
 ## mando/bot.py and mando/__main__.py - runtime
 
-CLI: `python -m mando PACKAGE.zip --zones FIELD.geojson [--host H] [--port P] [--callsign Mando] [--uid mando-bot] [--tz-offset -5] [--lat LAT --lon LON] [--lost-after 300] [--geofence-cooldown 180] [--rain-mm 2.0] [--no-announce] [--no-weather] [--dry-run] [--openssl openssl] [--share-package ZIP] [--share-name NAME] [--share-url-base URL] [--share-state PATH]`.
+CLI: `python -m mando PACKAGE.zip --zones FIELD.geojson [--host H] [--port P] [--callsign Mando] [--uid mando-bot] [--tz-offset -5] [--lat LAT --lon LON] [--lost-after 300] [--geofence-cooldown 180] [--rain-mm 2.0] [--no-announce] [--no-weather] [--dry-run] [--openssl openssl] [--share-package ZIP] [--share-name NAME] [--share-url-base URL] [--share-state PATH] [--grid NORTH,WEST,CELL_M,COLS,ROWS]`.
 
 - **Connection**: read the OpenTAKServer/ATAK connection package (zip, possibly nested): the `.pref` gives `connectString0` (`host:port:ssl`) and `clientPassword` (default `atakatak`); two `.p12` files, the one with `truststore` in its name is the CA. Convert both with `openssl pkcs12 -legacy -in … -passin env:MANDO_P12_PASSWORD` (the password goes through the environment, never the command line) (`-nodes` for the client, `-nokeys` for the truststore) into a private temporary directory (mode 0700) that is deleted on exit. `ssl.SSLContext(PROTOCOL_TLS_CLIENT)`, `check_hostname = False` (TAK server certificates do not carry the connect address), verify against the truststore, load the client chain.
 - **Position of the bot**: `--lat/--lon`, defaulting to the centre of the zones file bounding box.
@@ -141,7 +151,7 @@ CLI: `python -m mando PACKAGE.zip --zones FIELD.geojson [--host H] [--port P] [-
   - drain the queue: `Roster.update`; for each updated player run `GeofenceTracker.check` and send each message as a DM. When `--share-package` is set, the first accepted position from a player uid also triggers one `fileshare_event` to that player plus an explanatory DM; sent uids are remembered per package sha256, optionally persisted with `--share-state` (JSON `{sha256: [uids]}`, written via temp file + `os.replace`).
   - chat events whose text parses as a command, not sent by the bot itself, at most one command per sender every 3 s: build the `Context`, run the command, reply by DM when the command came by DM (`room_id` equals the bot uid), otherwise to `All Chat Rooms`.
   - every 60 s: re-send the identity event.
-  - every 30 s: `LostContactTracker.check` → one All Chat Rooms message per player: `"⚠ {callsign} lleva {N} min sin reportar. Última posición: {describe_location or lat,lon with 5 decimals}."`
+  - every 30 s: `LostContactTracker.check` → one All Chat Rooms message per player: `"⚠ {callsign} lleva {N} min sin reportar. Última posición: {ref}, {describe_location}."` using only the parts that exist, falling back to lat,lon with 5 decimals. `Bot(grid=…)` (from `--grid`) is passed into every `Context`.
   - every 60 s (unless `--no-announce`): `Announcer.due(light_schedule(today), now_local)` and `RainWatch.check` → All Chat Rooms.
   - weather (unless `--no-weather`): `ForecastCache.get` from a background thread every 5 min so the loop never blocks on the network.
 - **Reconnect** with backoff 5, 10, 20, 40, 60, 60 … seconds; keep roster and trackers across reconnects.

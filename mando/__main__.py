@@ -7,6 +7,7 @@ import json
 import sys
 
 from mando.bot import run
+from mando.grid import parse_grid
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,6 +57,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--share-state", default=None,
                         help="JSON donde recordar a quién se envió "
                         "el paquete")
+    parser.add_argument("--grid", default=None,
+                        help="cuadrícula GRG NORTH,WEST,CELL_M,COLS,ROWS "
+                        "(p. ej. 5.1650,-75.4960,100,9,9)")
     return parser
 
 
@@ -93,7 +97,13 @@ def bbox_center(path):
 
 
 def main(argv=None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.grid is not None:
+        try:
+            args.grid = parse_grid(args.grid)
+        except ValueError as exc:
+            parser.error(str(exc))
     if args.ignore_prefix is None:
         args.ignore_prefix = ["overlay-"]
     if args.lat is None or args.lon is None:

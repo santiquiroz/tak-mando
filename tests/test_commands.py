@@ -2,9 +2,12 @@ from datetime import datetime, timedelta, timezone
 
 from mando.commands import Context, parse_command, run_command
 from mando.geo import describe_offset
+from mando.grid import Grid, grid_ref
 from mando.roster import Player
 from mando.weather import Hour
 from mando.zones import Place, Zone
+
+GRID = Grid(5.1650, -75.4960, 100, 9, 9)
 
 NOW = datetime(2026, 10, 10, 22, 0, tzinfo=timezone.utc)
 
@@ -165,7 +168,7 @@ def test_ayuda_and_desconocido():
     assert run_command("ayuda", "", _ctx()) == (
         "Comandos: !luz (sol y oscuridad) \u00b7 !clima (pr\u00f3ximas 3 h) \u00b7 "
         "!equipo (d\u00f3nde est\u00e1 cada uno) \u00b7 !donde <callsign> \u00b7 !peligros (cerca de ti) "
-        "\u00b7 !mapas (paquete de mapas)"
+        "\u00b7 !mapas (paquete de mapas) \u00b7 !cuadro (tu cuadro del mapa)"
     )
     assert run_command("desconocido", "", _ctx()) == "No conozco ese comando. Escribe !ayuda."
 
@@ -176,3 +179,99 @@ def test_reply_truncated():
     reply = run_command("equipo", "", ctx)
     assert len(reply) == 700
     assert reply.endswith("\u2026")
+
+
+def test_cuadro_aliases():
+    assert parse_command("!cuadro")[0] == "cuadro"
+    assert parse_command("!grid")[0] == "cuadro"
+    assert parse_command("!cuadricula")[0] == "cuadro"
+    assert parse_command("!cuadrícula")[0] == "cuadro"
+    assert parse_command("!yo")[0] == "cuadro"
+
+
+def test_cuadro_without_position():
+    assert run_command("cuadro", "", _ctx()) == "No tengo tu posición todavía."
+    req = _player("r", "Base", lat=None, lon=None, seen=NOW)
+    assert run_command("cuadro", "", _ctx(requester=req, grid=GRID)) == (
+        "No tengo tu posición todavía."
+    )
+
+
+def test_cuadro_with_ref_and_place():
+    req = _player("r", "Base", lat=5.16110, lon=-75.49175, seen=NOW)
+    place = Place(name="Torre sur", lat=5.16110, lon=-75.49175, ring=None)
+    ctx = _ctx(requester=req, places=[place], grid=GRID)
+    assert grid_ref(GRID, req.lat, req.lon) == "E5"
+    assert run_command("cuadro", "", ctx) == "Estás en E5, en Torre sur."
+
+
+def test_cuadro_with_ref_no_place():
+    req = _player("r", "Base", lat=5.16110, lon=-75.49175, seen=NOW)
+    ctx = _ctx(requester=req, places=[], grid=GRID)
+    assert run_command("cuadro", "", ctx) == "Estás en E5."
+
+
+def test_cuadro_without_ref_with_place():
+    req = _player("r", "Base", lat=0.0, lon=0.0, seen=NOW)
+    place = Place(name="Torre sur", lat=0.0, lon=0.0, ring=None)
+    ctx = _ctx(requester=req, places=[place], grid=GRID)
+    assert grid_ref(GRID, req.lat, req.lon) is None
+    assert run_command("cuadro", "", ctx) == "Estás en Torre sur."
+
+
+def test_cuadro_without_ref_without_place():
+    req = _player("r", "Base", lat=0.0, lon=0.0, seen=NOW)
+    ctx = _ctx(requester=req, places=[], grid=GRID)
+    assert run_command("cuadro", "", ctx) == "Estás en 0.00000,0.00000."
+
+
+def test_donde_with_grid():
+    req = _player("r", "Base", lat=5.16153, lon=-75.49123, seen=NOW)
+    target = _player("a", "Recon", lat=5.16110, lon=-75.49175,
+                     seen=NOW - timedelta(seconds=15))
+    place = Place(name="Torre sur", lat=5.16110, lon=-75.49175, ring=None)
+    ctx = _ctx(requester=req, players=[req, target], places=[place], grid=GRID)
+    offset = describe_offset(req.lat, req.lon, target.lat, target.lon)
+    assert run_command("donde", "Recon", ctx) == (
+        f"Recon: {offset}, en E5, en Torre sur (hace 15 s)"
+    )
+
+
+def test_donde_with_grid_no_place():
+    req = _player("r", "Base", lat=5.16153, lon=-75.49123, seen=NOW)
+    target = _player("a", "Recon", lat=5.16110, lon=-75.49175,
+                     seen=NOW - timedelta(seconds=15))
+    ctx = _ctx(requester=req, players=[req, target], places=[], grid=GRID)
+    offset = describe_offset(req.lat, req.lon, target.lat, target.lon)
+    assert run_command("donde", "Recon", ctx) == (
+        f"Recon: {offset}, en E5 (hace 15 s)"
+    )
+
+
+def test_donde_with_grid_outside_ref():
+    req = _player("r", "Base", lat=5.16153, lon=-75.49123, seen=NOW)
+    target = _player("a", "Recon", lat=0.0, lon=0.0,
+                     seen=NOW - timedelta(seconds=15))
+    ctx = _ctx(requester=req, players=[req, target], places=[], grid=GRID)
+    offset = describe_offset(req.lat, req.lon, target.lat, target.lon)
+    assert run_command("donde", "Recon", ctx) == (
+        f"Recon: {offset} (hace 15 s)"
+    )
+
+
+def test_equipo_with_grid():
+    req = _player("r", "Base", lat=5.16153, lon=-75.49123, seen=NOW)
+    other = _player("a", "Recon", lat=5.16110, lon=-75.49175,
+                    seen=NOW - timedelta(seconds=12))
+    ctx = _ctx(requester=req, players=[req, other], grid=GRID)
+    offset = describe_offset(req.lat, req.lon, other.lat, other.lon)
+    assert run_command("equipo", "", ctx) == (
+        f"Recon {offset} (hace 12 s) [E5]"
+    )
+
+
+def test_equipo_with_grid_no_requester_pos():
+    other = _player("a", "Recon", lat=5.16110, lon=-75.49175,
+                    seen=NOW - timedelta(minutes=3))
+    ctx = _ctx(requester=None, players=[other], grid=GRID)
+    assert run_command("equipo", "", ctx) == "Recon (hace 3 min) [E5]"

@@ -10,8 +10,8 @@ Spanish. Design details live in [docs/DESIGN.md](docs/DESIGN.md).
 - **Geofence safety alerts**: a direct chat message to a player the moment
   they enter a hazard polygon (a flooded tank, a cliff edge).
 - **Chat commands**: players type `!luz`, `!clima`, `!equipo`,
-  `!donde <callsign>`, `!peligros`, `!mapas` in ATAK/iTAK chat and get
-  an answer.
+  `!donde <callsign>`, `!peligros`, `!mapas`, `!cuadro` in ATAK/iTAK chat
+  and get an answer.
 - **Announcements**: sunset, last light and darkness, plus heavy rain in
   the next hours, sent to the whole team.
 - **Lost contact**: a team message when a player who was active stops
@@ -96,6 +96,17 @@ python -m mando mando.zip --zones campo.geojson \
 - `--dry-run`: connect and listen, but print outgoing chats instead of
   sending them (identity is still sent so the bot stays visible).
 
+## Grid references
+
+Pass `--grid NORTH,WEST,CELL_M,COLS,ROWS` (for example
+`5.1650,-75.4960,100,9,9`) to lay a square GRG over the field: columns
+lettered A, B, C… west to east and rows numbered 1, 2, 3… north to south.
+The bot then adds the square to `!donde` answers, `!equipo` lines and
+lost-contact messages.
+
+Players can ask `!cuadro` (aliases `!grid`, `!cuadricula`, `!yo`) for the
+square they are in, for example `Estás en E5, a 40 m de Torre sur.`
+
 ## systemd
 
 An example unit is shipped as [deploy/tak-mando.service](deploy/tak-mando.service):
@@ -137,6 +148,7 @@ sudo systemctl enable --now tak-mando
 | `!donde <callsign>` | Distancia, dirección y lugar de un jugador. |
 | `!peligros` | Zonas de peligro a menos de 200 m de ti. |
 | `!mapas` | Envía el paquete de mapas del campo. |
+| `!cuadro` | Tu cuadro del mapa (GRG). |
 
 Commands work in All Chat Rooms and by direct message to the bot; the bot
 answers in the same room. At most one command per sender every 3 seconds.

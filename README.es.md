@@ -12,8 +12,8 @@ puede. Los mensajes del bot están en español. El diseño está en
   entra a un polígono de peligro (un tanque inundado, el borde de un
   barranco).
 - **Comandos de chat**: los jugadores escriben `!luz`, `!clima`, `!equipo`,
-  `!donde <callsign>`, `!peligros`, `!mapas` en el chat de ATAK/iTAK
-  y reciben respuesta.
+  `!donde <callsign>`, `!peligros`, `!mapas`, `!cuadro` en el chat de
+  ATAK/iTAK y reciben respuesta.
 - **Avisos**: puesta del sol, última luz y oscuridad total, además de
   lluvia fuerte en las próximas horas, enviados a todo el equipo.
 - **Pérdida de contacto**: mensaje al equipo cuando un jugador que estaba
@@ -103,6 +103,18 @@ python -m mando mando.zip --zones campo.geojson \
 - `--dry-run`: conecta y escucha, pero muestra los chats salientes en vez
   de enviarlos (la identidad sí se envía para que el bot siga visible).
 
+## Cuadrícula
+
+Pasa `--grid NORTH,WEST,CELL_M,COLS,ROWS` (por ejemplo
+`5.1650,-75.4960,100,9,9`) para tender una cuadrícula GRG sobre el terreno:
+columnas A, B, C… de oeste a este y filas 1, 2, 3… de norte a sur. El bot
+añade entonces el cuadro a las respuestas de `!donde`, a las líneas de
+`!equipo` y a los avisos de pérdida de contacto.
+
+Los jugadores pueden escribir `!cuadro` (alias `!grid`, `!cuadricula`,
+`!yo`) para saber en qué cuadro están, por ejemplo
+`Estás en E5, a 40 m de Torre sur.`
+
 ## systemd
 
 Hay una unidad de ejemplo en [deploy/tak-mando.service](deploy/tak-mando.service):
@@ -144,6 +156,7 @@ sudo systemctl enable --now tak-mando
 | `!donde <callsign>` | Distancia, dirección y lugar de un jugador. |
 | `!peligros` | Zonas de peligro a menos de 200 m de ti. |
 | `!mapas` | Envía el paquete de mapas del campo. |
+| `!cuadro` | Tu cuadro del mapa (GRG). |
 
 Los comandos funcionan en All Chat Rooms y por mensaje directo al bot; el
 bot responde en la misma sala. Máximo un comando por remitente cada

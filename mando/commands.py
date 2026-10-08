@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from mando.geo import bearing_deg, cardinal_es, centroid, describe_offset, distance_to_ring_m, format_distance
+from mando.grid import grid_ref
 from mando.weather import next_hours
 from mando.zones import describe_location
 
@@ -25,12 +26,16 @@ _ALIASES = {
     "mapas": "mapas",
     "mapa": "mapas",
     "paquete": "mapas",
+    "cuadro": "cuadro",
+    "grid": "cuadro",
+    "cuadricula": "cuadro",
+    "yo": "cuadro",
 }
 
 _AYUDA = (
     "Comandos: !luz (sol y oscuridad) \u00b7 !clima (pr\u00f3ximas 3 h) \u00b7 "
     "!equipo (d\u00f3nde est\u00e1 cada uno) \u00b7 !donde <callsign> \u00b7 !peligros (cerca de ti) "
-    "\u00b7 !mapas (paquete de mapas)"
+    "\u00b7 !mapas (paquete de mapas) \u00b7 !cuadro (tu cuadro del mapa)"
 )
 _SIN_PAQUETE = "Este servidor no tiene paquete de mapas configurado."
 _DESCONOCIDO = "No conozco ese comando. Escribe !ayuda."
@@ -54,6 +59,7 @@ class Context:
     moon: float
     hours: list
     forecast_age_s: object
+    grid: object = None
 
 
 def _strip_accents(text):
@@ -96,6 +102,15 @@ def _duration(delta):
 
 def _has_pos(player):
     return player is not None and player.lat is not None and player.lon is not None
+
+
+def _ref(ctx, lat, lon):
+    grid = getattr(ctx, "grid", None)
+    if grid is None:
+        return None
+    if lat is None or lon is None:
+        return None
+    return grid_ref(grid, lat, lon)
 
 
 def _find_player(players, query):
@@ -172,10 +187,12 @@ def _equipo(ctx):
     out = []
     for p in others:
         age = _age(p.last_seen, ctx.now_utc)
+        ref = _ref(ctx, p.lat, p.lon)
+        suffix = f" [{ref}]" if ref is not None else ""
         if _has_pos(req):
-            out.append(f"{p.callsign} {describe_offset(req.lat, req.lon, p.lat, p.lon)} (hace {age})")
+            out.append(f"{p.callsign} {describe_offset(req.lat, req.lon, p.lat, p.lon)} (hace {age}){suffix}")
         else:
-            out.append(f"{p.callsign} (hace {age})")
+            out.append(f"{p.callsign} (hace {age}){suffix}")
     return "\n".join(out)
 
 
@@ -189,14 +206,38 @@ def _donde(args, ctx):
         return f"No encuentro a '{query}'. Conectados: {callsigns}"
     age = _age(found.last_seen, ctx.now_utc)
     loc = describe_location(ctx.places, found.lat, found.lon)
+    ref = _ref(ctx, found.lat, found.lon)
     if _has_pos(ctx.requester):
         offset = describe_offset(ctx.requester.lat, ctx.requester.lon, found.lat, found.lon)
+        parts = [offset]
+        if ref is not None:
+            parts.append(f"en {ref}")
         if loc:
-            return f"{found.callsign}: {offset}, {loc} (hace {age})"
-        return f"{found.callsign}: {offset} (hace {age})"
+            parts.append(loc)
+        return f"{found.callsign}: {', '.join(parts)} (hace {age})"
+    parts = []
+    if ref is not None:
+        parts.append(f"en {ref}")
     if loc:
-        return f"{found.callsign}: {loc} (hace {age})"
+        parts.append(loc)
+    if parts:
+        return f"{found.callsign}: {', '.join(parts)} (hace {age})"
     return f"{found.callsign} (hace {age})"
+
+
+def _cuadro(ctx):
+    req = ctx.requester
+    if not _has_pos(req):
+        return _SIN_POSICION
+    ref = _ref(ctx, req.lat, req.lon)
+    loc = describe_location(ctx.places, req.lat, req.lon)
+    if ref is not None and loc:
+        return f"Estás en {ref}, {loc}."
+    if ref is not None:
+        return f"Estás en {ref}."
+    if loc:
+        return f"Estás {loc}."
+    return f"Estás en {req.lat:.5f},{req.lon:.5f}."
 
 
 def _peligros(ctx):
@@ -238,6 +279,8 @@ def run_command(name, args, ctx):
         reply = _peligros(ctx)
     elif name == "mapas":
         reply = _SIN_PAQUETE
+    elif name == "cuadro":
+        reply = _cuadro(ctx)
     else:
         reply = _DESCONOCIDO
     if len(reply) > 700:

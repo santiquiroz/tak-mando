@@ -6,8 +6,9 @@ import pytest
 
 from mando import cot
 from mando.bot import Bot, read_package
+from mando.grid import Grid
 from mando.weather import ForecastCache
-from mando.zones import Zone
+from mando.zones import Place, Zone
 
 NOW = datetime(2026, 10, 10, 22, 0, tzinfo=timezone.utc)
 RING = [[0.0, 0.0], [0.01, 0.0], [0.01, 0.01], [0.0, 0.01], [0.0, 0.0]]
@@ -163,3 +164,41 @@ def test_lost_contact_message():
     assert len(alls) == 1
     text = cot.parse_event(alls[0])["chat"]["text"]
     assert text.startswith("⚠ Recon lleva 5 min sin reportar.")
+
+
+def test_lost_contact_message_with_grid():
+    grid = Grid(5.1650, -75.4960, 100, 9, 9)
+    place = Place(name="Torre sur", lat=5.16110, lon=-75.49175, ring=None)
+    bot = _bot(lost_after=300, grid=grid, places=[place])
+    bot.handle_event(
+        _pos(lat=5.16110, lon=-75.49175, when=NOW), NOW)
+    outs = bot.tick(NOW + timedelta(seconds=301))
+    alls = [
+        o for o in outs
+        if (cot.parse_event(o) or {}).get("chat")
+        and cot.parse_event(o)["chat"]["room_id"] == "All Chat Rooms"
+    ]
+    assert len(alls) == 1
+    text = cot.parse_event(alls[0])["chat"]["text"]
+    assert text == (
+        "⚠ Recon lleva 5 min sin reportar. "
+        "Última posición: E5, en Torre sur."
+    )
+
+
+def test_lost_contact_message_with_grid_no_place():
+    grid = Grid(5.1650, -75.4960, 100, 9, 9)
+    bot = _bot(lost_after=300, grid=grid, places=[])
+    bot.handle_event(
+        _pos(lat=5.16110, lon=-75.49175, when=NOW), NOW)
+    outs = bot.tick(NOW + timedelta(seconds=301))
+    alls = [
+        o for o in outs
+        if (cot.parse_event(o) or {}).get("chat")
+        and cot.parse_event(o)["chat"]["room_id"] == "All Chat Rooms"
+    ]
+    assert len(alls) == 1
+    text = cot.parse_event(alls[0])["chat"]["text"]
+    assert text == (
+        "⚠ Recon lleva 5 min sin reportar. Última posición: E5."
+    )

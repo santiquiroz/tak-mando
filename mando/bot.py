@@ -34,6 +34,7 @@ from mando.cot import (
     parse_event,
     split_stream,
 )
+from mando.grid import grid_ref
 from mando.roster import Roster
 from mando.rules import (
     Announcer,
@@ -303,6 +304,7 @@ class Bot:
         version=None,
         package=None,
         sent_state=None,
+        grid=None,
     ):
         self.uid = uid
         self.callsign = callsign
@@ -332,6 +334,7 @@ class Bot:
         self.version = version if version is not None else __version__
         self.package = package
         self.sent_state = sent_state
+        self.grid = grid
         self._sent: dict = (
             _load_sent_state(sent_state) if sent_state is not None else {}
         )
@@ -457,6 +460,7 @@ class Bot:
             moon=moon_illumination(now),
             hours=hours,
             forecast_age_s=forecast_age,
+            grid=self.grid,
         )
         text = run_command(name, args, ctx)
         if (chat.get("room_id") or "") == self.uid:
@@ -510,15 +514,24 @@ class Bot:
             self._last_lost = now
             for player in self.lost.check(self.roster.players(), now):
                 mins = int((now - player.last_seen).total_seconds() // 60)
+                ref = None
+                if self.grid is not None:
+                    ref = grid_ref(self.grid, player.lat, player.lon)
                 loc = describe_location(
                     self.places, player.lat, player.lon
                 )
-                if not loc:
-                    loc = f"{player.lat:.5f},{player.lon:.5f}"
+                parts = []
+                if ref is not None:
+                    parts.append(ref)
+                if loc:
+                    parts.append(loc)
+                if not parts:
+                    parts.append(f"{player.lat:.5f},{player.lon:.5f}")
+                where = ", ".join(parts)
                 out.append(all_chat_event(
                     self.uid, self.callsign,
                     f"⚠ {player.callsign} lleva {mins} min sin reportar. "
-                    f"Última posición: {loc}.",
+                    f"Última posición: {where}.",
                     now,
                 ))
         if self.announce and (
@@ -708,6 +721,7 @@ def run(args) -> int:
             forecast_cache=cache,
             package=package,
             sent_state=sent_state,
+            grid=getattr(args, "grid", None),
         )
         _log(
             f"zonas: {len(zones)} peligros, {len(places)} lugares "
