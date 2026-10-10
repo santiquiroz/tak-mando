@@ -219,7 +219,8 @@ def build_system_prompt(event_name, grid, places, zones):
         except (TypeError, ValueError):
             cell = str(grid.cell_m)
         lines.append(f"Cuadrícula: columnas A-{last} de oeste a este, filas 1-{grid.rows} "
-                     f"de norte a sur, cuadros de {cell} m.")
+                     f"de norte a sur, cuadros de {cell} m: A1 es la esquina noroeste y "
+                     f"{last}{grid.rows} la sureste.")
     numbered = []
     for place in places or []:
         name = (place.name or "").strip()

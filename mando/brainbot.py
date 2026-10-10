@@ -190,7 +190,8 @@ def drain(bot, now):
             del bot._pending[uid]
             try:
                 text = future.result()
-            except Exception:
+            except Exception as exc:
+                _log(f"cerebro falló: {exc!r}")
                 text = "Sin cerebro ahora, usa !ayuda."
             out.append(_route_event(bot, route, text, now))
         elif (now - started).total_seconds() > BRAIN_TIMEOUT_S:
