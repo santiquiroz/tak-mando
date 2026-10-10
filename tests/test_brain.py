@@ -226,3 +226,11 @@ def test_memory_has_lock():
     import threading
     brain, _ = _brain([say("ok")])
     assert isinstance(brain._lock, type(threading.Lock()))
+
+
+def test_system_prompt_describes_rotated_grid():
+    grid = Grid(north=5.1614426, west=-75.4895678, cell_m=25.66, cols=15, rows=17, row_m=20.44,
+                col_bearing_deg=207.73, row_bearing_deg=297.41, labels="ABCDEFGHIJGKLMN")
+    prompt = build_system_prompt("OP MEDUSA", grid, [], [])
+    assert ("Cuadrícula: columnas A-N (en el mapa: ABCDEFGHIJGKLMN), filas 1-17, cuadros de 26 x 20 m; "
+            "A1 está en la esquina este del campo.") in prompt

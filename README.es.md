@@ -111,6 +111,21 @@ columnas A, B, C… de oeste a este y filas 1, 2, 3… de norte a sur. El bot
 añade entonces el cuadro a las respuestas de `!donde`, a las líneas de
 `!equipo` y a los avisos de pérdida de contacto.
 
+Cuando la organización entrega su propia cuadrícula (girada, con cuadros
+rectangulares y letras impresas que pueden repetirse), descríbela en un JSON y
+pasa `--grid-file RUTA` en su lugar (gana sobre `--grid`, en el bot y en el MCP):
+
+```json
+{"north": 5.1614426, "west": -75.4895678, "cell_m": 25.66, "row_m": 20.44,
+ "cols": 15, "rows": 17, "col_bearing_deg": 207.73, "row_bearing_deg": 297.41,
+ "labels": "ABCDEFGHIJGKLMN"}
+```
+
+`north`/`west` es la esquina exterior del primer cuadro; las columnas avanzan
+hacia `col_bearing_deg` en pasos de `cell_m` y las filas hacia
+`row_bearing_deg` en pasos de `row_m`. Una letra repetida apunta a su primera
+columna cuando un jugador la escribe, y el bot escribe la otra como `G10 (2ª G)`.
+
 Los jugadores pueden escribir `!cuadro` (alias `!grid`, `!cuadricula`,
 `!yo`) para saber en qué cuadro están, por ejemplo
 `Estás en E5, a 40 m de Torre sur.`

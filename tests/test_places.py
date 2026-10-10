@@ -96,3 +96,24 @@ def test_different_names_stay_ambiguous():
         resolve_place("torre", grid=GRID, places=places, players=[RECON, ME], requester=ME)
         == "Hay varios lugares: 12 Torre sur, 11 Torre oeste. ¿Cuál?"
     )
+
+
+OFFICIAL_GRID = Grid(north=5.1614426, west=-75.4895678, cell_m=25.66, cols=15, rows=17, row_m=20.44,
+                     col_bearing_deg=207.73, row_bearing_deg=297.41, labels="ABCDEFGHIJGKLMN")
+
+
+def _resolve_official(text):
+    return resolve_place(text, grid=OFFICIAL_GRID, places=PLACES, players=[], requester=None)
+
+
+def test_official_grid_cell_resolves_to_its_centre():
+    r = _resolve_official("H9")
+    assert isinstance(r, Resolved) and r.label == "H9"
+    assert (r.lat, r.lon) == cell_center(OFFICIAL_GRID, "H9")
+    assert grid_ref(OFFICIAL_GRID, r.lat, r.lon) == "H9"
+
+
+def test_official_grid_unknown_cell_and_far_point():
+    assert _resolve_official("Z3") == "El cuadro Z3 no existe en este mapa."
+    assert _resolve_official("H18") == "El cuadro H18 no existe en este mapa."
+    assert _resolve_official("5.1714426,-75.4895678") == "Ese punto queda fuera del campo."

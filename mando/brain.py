@@ -5,7 +5,7 @@ import threading
 import time
 import urllib.request
 
-from mando.grid import grid_ref
+from mando.grid import a1_corner_direction, column_labels, grid_ref, is_default_layout, row_size_m
 from mando.tools import TOOLS, clean
 
 
@@ -204,6 +204,30 @@ class Brain:
             self._memory[uid] = turns
 
 
+def _plain_grid_line(grid):
+    last = chr(64 + grid.cols)
+    try:
+        cell = f"{grid.cell_m:g}"
+    except (TypeError, ValueError):
+        cell = str(grid.cell_m)
+    return (f"Cuadrícula: columnas A-{last} de oeste a este, filas 1-{grid.rows} "
+            f"de norte a sur, cuadros de {cell} m: A1 es la esquina noroeste y "
+            f"{last}{grid.rows} la sureste.")
+
+
+def _custom_grid_line(grid):
+    labels = column_labels(grid)
+    return (f"Cuadrícula: columnas {labels[0]}-{labels[-1]} (en el mapa: {labels}), "
+            f"filas 1-{grid.rows}, cuadros de {grid.cell_m:.0f} x {row_size_m(grid):.0f} m; "
+            f"{labels[0]}1 está en la esquina {a1_corner_direction(grid)} del campo.")
+
+
+def _grid_line(grid):
+    if is_default_layout(grid):
+        return _plain_grid_line(grid)
+    return _custom_grid_line(grid)
+
+
 def build_system_prompt(event_name, grid, places, zones):
     lines = [f"Eres Mando, el asistente táctico de la partida de airsoft {event_name}."]
     lines.append("Responde en español y en máximo 3 frases. Usa herramientas para cualquier dato "
@@ -213,14 +237,7 @@ def build_system_prompt(event_name, grid, places, zones):
                  "Responde en texto plano, sin markdown, asteriscos, viñetas ni emojis, y sin frases "
                  "de cierre de relleno como \"Todo listo.\" o \"Todo actualizado.\".")
     if grid is not None:
-        last = chr(64 + grid.cols)
-        try:
-            cell = f"{grid.cell_m:g}"
-        except (TypeError, ValueError):
-            cell = str(grid.cell_m)
-        lines.append(f"Cuadrícula: columnas A-{last} de oeste a este, filas 1-{grid.rows} "
-                     f"de norte a sur, cuadros de {cell} m: A1 es la esquina noroeste y "
-                     f"{last}{grid.rows} la sureste.")
+        lines.append(_grid_line(grid))
     numbered = []
     for place in places or []:
         name = (place.name or "").strip()

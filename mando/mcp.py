@@ -12,7 +12,7 @@ from mando.commands import Context
 from mando.elevation import load_dted
 from mando.events import EventLog
 from mando.exposure import load_exposure
-from mando.grid import parse_grid
+from mando.grid import select_grid
 from mando.layer import Layer, parse_iso_z
 from mando.roster import Player
 from mando.sun import moon_illumination, sun_events
@@ -172,6 +172,8 @@ def _build_parser():
     parser.add_argument("--buildings", default=None, help="GeoJSON de edificios (lugares y alturas)")
     parser.add_argument("--grid", default=None,
                         help="cuadrícula GRG NORTH,WEST,CELL_M,COLS,ROWS")
+    parser.add_argument("--grid-file", default=None,
+                        help="JSON de cuadrícula rotada o con etiquetas propias (gana sobre --grid)")
     parser.add_argument("--tz-offset", type=float, default=-5.0)
     return parser
 
@@ -221,12 +223,10 @@ def main(argv=None):
         sys.stdout.reconfigure(encoding="utf-8")
     parser = _build_parser()
     args = parser.parse_args(argv)
-    grid = None
-    if args.grid is not None:
-        try:
-            grid = parse_grid(args.grid)
-        except ValueError as exc:
-            parser.error(str(exc))
+    try:
+        grid = select_grid(args.grid, args.grid_file)
+    except ValueError as exc:
+        parser.error(str(exc))
     try:
         zones, places, center = _load_field(args.zones)
     except (OSError, ValueError) as exc:

@@ -104,6 +104,21 @@ lettered A, B, C… west to east and rows numbered 1, 2, 3… north to south.
 The bot then adds the square to `!donde` answers, `!equipo` lines and
 lost-contact messages.
 
+When the organizers hand out their own grid (rotated, rectangular cells,
+printed labels that may even repeat a letter), describe it in a JSON file and
+pass `--grid-file PATH` instead (it wins over `--grid`, bot and MCP alike):
+
+```json
+{"north": 5.1614426, "west": -75.4895678, "cell_m": 25.66, "row_m": 20.44,
+ "cols": 15, "rows": 17, "col_bearing_deg": 207.73, "row_bearing_deg": 297.41,
+ "labels": "ABCDEFGHIJGKLMN"}
+```
+
+`north`/`west` is the outer corner of the first cell; columns grow along
+`col_bearing_deg` in `cell_m` steps and rows along `row_bearing_deg` in
+`row_m` steps. A repeated letter resolves to its first column when a player
+types it, and the bot writes the later one as `G10 (2ª G)`.
+
 Players can ask `!cuadro` (aliases `!grid`, `!cuadricula`, `!yo`) for the
 square they are in, for example `Estás en E5, a 40 m de Torre sur.`
 

@@ -5,8 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from mando.geo import haversine_m
-from mando.grid import Grid, cell_deg, grid_ref
+from mando.grid import Grid, cell_center, distance_outside_m, grid_ref
 from mando.layer import normalize
 from mando.roster import Player
 from mando.zones import Place
@@ -16,6 +15,7 @@ _COORD_RE = re.compile(r"^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$")
 _NUMBER_RE = re.compile(r"^\d{1,3}$")
 _LEADING_NUM_RE = re.compile(r"^\d+\s+")
 _HERE_WORDS = {"aqui", "mi posicion", "donde estoy", "yo"}
+_FIELD_MARGIN_M = 500
 
 
 @dataclass
@@ -23,20 +23,6 @@ class Resolved:
     lat: float
     lon: float
     label: str
-
-
-def cell_center(grid: Grid | None, ref: str) -> tuple[float, float] | None:
-    if grid is None:
-        return None
-    norm = normalize(ref)
-    if not _CELL_RE.match(norm):
-        return None
-    col = ord(norm[0]) - ord("a")
-    row = int(norm[1:]) - 1
-    if col < 0 or col >= grid.cols or row < 0 or row >= grid.rows:
-        return None
-    dlat, dlon = cell_deg(grid)
-    return (grid.north - (row + 0.5) * dlat, grid.west + (col + 0.5) * dlon)
 
 
 def _empty(norm: str) -> str | None:
@@ -134,12 +120,7 @@ def _unknown(text: str) -> str:
 def _outside_field(grid: Grid | None, lat: float, lon: float) -> bool:
     if grid is None:
         return False
-    dlat, dlon = cell_deg(grid)
-    south = grid.north - grid.rows * dlat
-    east = grid.west + grid.cols * dlon
-    near_lat = min(max(lat, south), grid.north)
-    near_lon = min(max(lon, grid.west), east)
-    return haversine_m(lat, lon, near_lat, near_lon) > 500
+    return distance_outside_m(grid, lat, lon) > _FIELD_MARGIN_M
 
 
 def resolve_place(

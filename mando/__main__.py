@@ -7,7 +7,7 @@ import json
 import sys
 
 from mando.bot import run
-from mando.grid import parse_grid
+from mando.grid import select_grid
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -66,6 +66,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--grid", default=None,
                         help="cuadrícula GRG NORTH,WEST,CELL_M,COLS,ROWS "
                         "(p. ej. 5.1650,-75.4960,100,9,9)")
+    parser.add_argument("--grid-file", default=None,
+                        help="JSON de cuadrícula rotada o con etiquetas propias "
+                        "(gana sobre --grid)")
     parser.add_argument("--layer", default=None,
                         help="GeoJSON de la capa de juego (juego.geojson)")
     parser.add_argument("--state", default=None,
@@ -122,11 +125,10 @@ def bbox_center(path):
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.grid is not None:
-        try:
-            args.grid = parse_grid(args.grid)
-        except ValueError as exc:
-            parser.error(str(exc))
+    try:
+        args.grid = select_grid(args.grid, args.grid_file)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.ignore_prefix is None:
         args.ignore_prefix = ["overlay-"]
     if args.lat is None or args.lon is None:
